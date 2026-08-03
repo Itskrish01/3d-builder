@@ -1,0 +1,720 @@
+
+
+/* ==========================================================================
+   3. SHADERS
+   ========================================================================== */
+
+/* ---- shared GLSL ---------------------------------------------------------
+   Ashima / Stefan Gustavson 2D simplex noise. Cheap enough to evaluate a
+   couple of times per vertex, and — unlike value noise — it has no visible
+   axis-aligned grid, which matters a lot when it drives a wind field.
+   -------------------------------------------------------------------------- */
+export var GLSL_NOISE = `
+vec3 gp_mod289(vec3 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+vec2 gp_mod289(vec2 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+vec3 gp_permute(vec3 x){ return gp_mod289(((x*34.0)+1.0)*x); }
+float snoise(vec2 v){
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                     -0.577350269189626, 0.024390243902439);
+  vec2 i  = floor(v + dot(v, C.yy));
+  vec2 x0 = v -   i + dot(i, C.xx);
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = gp_mod289(i);
+  vec3 p = gp_permute( gp_permute( i.y + vec3(0.0, i1.y, 1.0))
+                     + i.x + vec3(0.0, i1.x, 1.0));
+  vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+  m = m*m; m = m*m;
+  vec3 x  = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h  = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+  vec3 g;
+  g.x  = a0.x  * x0.x   + h.x  * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+float fbm2(vec2 p){
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++){ s += a * snoise(p); p *= 2.03; a *= 0.5; }
+  return s;
+}
+float hash11(float p){ return fract(sin(p * 127.1) * 43758.5453123); }
+vec2 rot2(vec2 v, float a){ float c = cos(a), s = sin(a); return vec2(c*v.x - s*v.y, s*v.x + c*v.y); }
+`;
+
+export var GLSL_COLOR = `
+vec3 aces(vec3 x){
+  const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return clamp((x * (a*x + b)) / (x * (c*x + d) + e), 0.0, 1.0);
+}
+float aces1(float x){
+  const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return clamp((x * (a*x + b)) / (x * (c*x + d) + e), 0.0, 1.0);
+}
+/* Single output path for every material: ACES filmic tone map + gamma. Doing
+   it here (instead of relying on renderer post-state) keeps the whole scene
+   consistent no matter which material drew the pixel.
+
+   Applied per channel — the obvious way — the curve compresses each channel by
+   a different amount, so it does not just darken a colour, it *changes* it: a
+   leaf authored at 74/122/46 came out 39/87/21, half again as saturated and a
+   different hue. Map the luminance instead and carry the chroma through
+   unchanged. Bright pixels blend back to the per-channel curve, because real
+   highlights really do bleach toward white. */
+vec4 gp_out(vec3 c, float exposure){
+  c *= exposure;
+  float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float Lt = aces1(L);
+  vec3 keepsHue = c * (Lt / max(L, 1e-5));
+  vec3 m = mix(keepsHue, aces(c), clamp(Lt * Lt, 0.0, 1.0));
+  return vec4(pow(clamp(m, 0.0, 1.0), vec3(0.45454545)), 1.0);
+}
+vec3 rgb2hsv(vec3 c){
+  vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  return vec3(abs(q.z + (q.w - q.y) / (6.0*d + 1e-10)), d / (q.x + 1e-10), q.x);
+}
+vec3 hsv2rgb(vec3 c){
+  vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+`;
+
+export var GLSL_FOG = `
+uniform vec3  uFogColor;
+uniform float uFogDensity;
+vec3 gp_fog(vec3 c, float dist){
+  float f = 1.0 - exp(-pow(max(dist,0.0) * uFogDensity, 2.0));
+  return mix(c, uFogColor, clamp(f, 0.0, 1.0));
+}
+`;
+
+/* ==========================================================================
+   GRASS — vertex shader
+   --------------------------------------------------------------------------
+   The blade template geometry is a strip in "blade space":
+       position.x = side   (-1 .. +1, 0 at the tip vertex)
+       position.y = t      ( 0 ..  1, arc-length parameter along the blade)
+   Nothing about the blade's world placement lives in the template — every
+   blade is one instance, and all animation happens right here.
+   ========================================================================== */
+export var GRASS_VS = GLSL_NOISE + GLSL_COLOR + `
+attribute vec3  aOffset;   // root position, world space
+attribute vec3  aNormal;   // ground normal at the root
+attribute float aRot;      // yaw
+attribute vec2  aSize;     // (height mul, width mul)
+attribute vec2  aShape;    // (droop mul, stiffness)
+attribute float aSeed;     // 0..1 per-blade random
+
+uniform float uTime;
+uniform vec2  uWindDir;
+uniform float uWindStrength, uWindSpeed, uTurbulence, uWaveScale;
+uniform float uGustScale, uGustSpeed, uGustStrength;
+uniform float uHeight, uWidth, uTaper, uCurve, uBladeCurl;
+uniform float uDensity;
+uniform vec2  uPlateHalf, uPlateSize;
+uniform sampler2D uPushTex;
+uniform float uPushEnc;
+uniform vec3  uBaseColor, uTipColor;
+uniform float uGradPow, uHueVar, uSatVar, uValVar;
+
+varying float vT, vWind, vAO;
+varying vec3  vN, vW, vCol;
+
+/* A circular arc starting at O, initially travelling along U, curving toward
+   D with curvature k (1/radius). Because the arc is parameterised by
+   arc-length s, the blade's length is preserved EXACTLY for any bend — this
+   is the whole reason we use arcs instead of shearing the vertices. */
+vec3 arcPos(vec3 O, vec3 U, vec3 D, float k, float s){
+  if (abs(k) < 1e-4) return O + U * s;
+  return O + D * ((1.0 - cos(k*s)) / k) + U * (sin(k*s) / k);
+}
+vec3 arcTan(vec3 U, vec3 D, float k, float s){
+  return D * sin(k*s) + U * cos(k*s);
+}
+vec3 safeDir(vec3 v, vec3 fb){
+  float l = length(v);
+  return (l < 1e-4) ? fb : v / l;
+}
+
+void main(){
+  float t    = position.y;
+  float side = position.x;
+  vec3  root = aOffset;
+
+  /* ---- culling -----------------------------------------------------------
+     The density slider and the plate bounds both cull here rather than on the
+     CPU, so changing either is instant and never touches a buffer. */
+  float dseed = hash11(aSeed * 91.7 + 3.1);
+  bool alive = (dseed < uDensity) &&
+               (abs(root.x) <= uPlateHalf.x) && (abs(root.z) <= uPlateHalf.y);
+  if (!alive){ gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  float H = uHeight * aSize.x;
+  float W = uWidth  * aSize.y;
+  float stiff = max(0.25, aShape.y);
+
+  /* ======================================================================
+     WIND
+     ----------------------------------------------------------------------
+     Everything below is evaluated from the blade ROOT only, so a blade bends
+     as one coherent object instead of rippling within itself.
+
+     The field is built from four independent contributions:
+
+       1. SWELL   – one octave of simplex noise whose domain is scrolled
+                    against the wind direction. Large wavelength, so whole
+                    regions of the field lean together. This is the "body" of
+                    the wind.
+       2. CHOP    – a second, ~3x higher-frequency octave. It breaks the swell
+                    into patches and also jitters the local wind DIRECTION,
+                    which is what stops the field reading as one sine wave.
+       3. GUST    – a travelling plane wave along the wind axis. sin() is
+                    remapped to 0..1 and sharpened with pow(), which narrows
+                    the crest into a band. That band sweeps across the plate
+                    at gustSpeed/gustScale units per second and is visible as
+                    a discrete wave of bent grass, not a global wobble. The
+                    crest is modulated by the chop octave so the front is
+                    ragged rather than a perfect straight line.
+       4. FLUTTER – a fast per-blade oscillator (phase and rate derived from
+                    aSeed) that is applied ONLY to the upper arc segment, so
+                    it chatters the tip without moving the root.
+     ====================================================================== */
+  vec2 wdir = uWindDir;
+  vec2 q    = root.xz * uWaveScale - wdir * (uTime * uWindSpeed);
+
+  float swell = snoise(q);                       // (1)
+  float chop  = snoise(q * 2.9 + vec2(17.3, -8.1)); // (2)
+
+  float gPhase = dot(root.xz, wdir) * uGustScale - uTime * uGustSpeed;  // (3)
+  float gust   = pow(sin(gPhase) * 0.5 + 0.5, 5.0);
+  gust *= (0.5 + 0.5 * chop) * uGustStrength;
+
+  // Base sway is biased positive: air pushes, it does not pull, so grass
+  // should mostly lean downwind and only occasionally stand back up.
+  float sway    = 0.5 + 0.5 * swell + 0.28 * chop * uTurbulence;
+  float windAmt = uWindStrength * max(0.0, sway + gust) / stiff;
+
+  // Local direction jitter — the single biggest cue that this is a turbulent
+  // field and not a scrolling texture.
+  wdir = rot2(wdir, chop * uTurbulence * 0.85);
+
+  /* ---- interactive push --------------------------------------------------
+     A CPU-simulated damped-spring field is uploaded as a texture. RG holds a
+     signed 2D displacement in the same "bend radians" unit as the wind, so it
+     simply adds into the bend vector below. Because that field springs back
+     over time rather than tracking the cursor, fast sweeps leave a wake. */
+  vec2 puv  = clamp(root.xz / uPlateSize + 0.5, vec2(0.001), vec2(0.999));
+  vec2 push = (texture2D(uPushTex, puv).rg * 2.0 - 1.0) * uPushEnc / stiff;
+
+  /* ---- total bend --------------------------------------------------------
+     Natural droop, wind and push are summed as VECTORS in the ground plane.
+     The magnitude of that sum is the total tip angle in radians; its
+     direction is the direction the blade leans. Summing before converting to
+     an angle means the three effects blend instead of fighting. */
+  vec2 face   = vec2(-sin(aRot), cos(aRot));           // the blade's own lean
+  vec2 bendXZ = face * (aShape.x * uCurve) + wdir * windAmt + push;
+
+  float total = min(length(bendXZ), 2.5);
+  vec2  bdir  = (length(bendXZ) > 1e-5) ? normalize(bendXZ) : vec2(0.0, 1.0);
+
+  // Flutter (4): fast, small, per-blade phase, scaled by how hard the wind is
+  // blowing so still air produces still grass.
+  float ph   = aSeed * 43.7;
+  float flut = sin(uTime * (5.5 + 3.0 * hash11(aSeed * 7.7)) + ph) * 0.6
+             + sin(uTime * (11.0 + 5.0 * hash11(aSeed * 3.3)) + ph * 1.7) * 0.4;
+  flut *= uTurbulence * uWindStrength * (0.25 + 0.75 * max(0.0, sway)) * 0.55 / stiff;
+
+  /* ---- two-segment arc ---------------------------------------------------
+     The blade is built from TWO circular arcs joined end to end:
+       base arc  – 55% of the length, carries only 30% of the total angle
+       tip arc   – 45% of the length, carries 70% of the angle plus flutter
+     Both arcs are exact, so total length is preserved; the uneven angle split
+     is what makes the tip travel far while the root barely moves, and the
+     independent tip direction lets the upper half chatter sideways. */
+  float h1 = H * 0.55, h2 = max(H - h1, 1e-4);
+  float k1 = (total * 0.30) / max(h1, 1e-4);
+  float k2 = (total * 0.70) / h2 + flut * 0.9 / h2;
+
+  vec2 perp   = vec2(-bdir.y, bdir.x);
+  vec2 tipXZ  = normalize(bdir + perp * flut * 1.1 + vec2(1e-6, 0.0));
+
+  vec3 up = normalize(aNormal);
+  vec3 D1 = safeDir(vec3(bdir.x, 0.0, bdir.y) - up * dot(vec3(bdir.x, 0.0, bdir.y), up), vec3(0.0, 0.0, 1.0));
+
+  float s  = t * H;
+  float s1 = min(s, h1);
+  vec3  P  = arcPos(root, up, D1, k1, s1);
+  vec3  T  = arcTan(up, D1, k1, s1);
+
+  if (s > h1){
+    vec3 dw = vec3(tipXZ.x, 0.0, tipXZ.y);
+    vec3 D2 = safeDir(dw - T * dot(dw, T), D1);
+    float s2 = s - h1;
+    P = arcPos(P, T, D2, k2, s2);
+    T = arcTan(T, D2, k2, s2);
+  }
+
+  /* ---- width, cross-section curl ---------------------------------------- */
+  vec3 r0 = vec3(cos(aRot), 0.0, sin(aRot));
+  vec3 R  = safeDir(r0 - T * dot(r0, T), vec3(1.0, 0.0, 0.0));
+  float wprof = pow(max(1.0 - t, 0.0), uTaper);
+  vec3 pos = P + R * (side * W * 0.5 * wprof);
+
+  // Blades are modelled flat but shaded as if curled across their width; the
+  // normal is rotated about the blade tangent by the vertex's side, which
+  // produces a soft highlight band down the middle instead of a flat card.
+  vec3 N = normalize(cross(R, T));
+  float curl = side * uBladeCurl;
+  N = normalize(N * cos(curl) + R * sin(curl));
+
+  /* ---- per-blade colour (computed here, interpolated for free) ----------- */
+  vec3 col = mix(uBaseColor, uTipColor, pow(t, uGradPow));
+  vec3 hsv = rgb2hsv(max(col, vec3(1e-5)));
+  float r1 = hash11(aSeed * 13.1), r2 = hash11(aSeed * 29.3), r3 = hash11(aSeed * 57.9);
+  hsv.x = fract(hsv.x + (r1 * 2.0 - 1.0) * uHueVar);
+  hsv.y = clamp(hsv.y * (1.0 + (r2 * 2.0 - 1.0) * uSatVar), 0.0, 1.0);
+  hsv.z = max(hsv.z * (1.0 + (r3 * 2.0 - 1.0) * uValVar), 0.0);
+  vCol = hsv2rgb(hsv);
+
+  vT    = t;
+  vN    = N;
+  vW    = pos;
+  vWind = clamp(total * 0.5, 0.0, 1.0);
+  vAO   = smoothstep(0.0, 0.55, t);
+
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+`;
+
+export var GRASS_FS = GLSL_COLOR + GLSL_FOG + `
+uniform vec3  uSunDir, uSunColor, uSkyColor, uGroundColor;
+uniform float uAmbient, uAO, uTranslucency, uSpecular, uRoughness, uExposure;
+varying float vT, vWind, vAO;
+varying vec3  vN, vW, vCol;
+
+void main(){
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  vec3 V = normalize(cameraPosition - vW);
+  vec3 L = uSunDir;
+
+  // Wrapped ("half lambert") diffuse: real grass scatters so much light that a
+  // hard N.L terminator looks wrong — the wrap keeps the shadow side readable.
+  float wrap = 0.5;
+  float ndl  = max(0.0, (dot(N, L) + wrap) / (1.0 + wrap));
+
+  // Ambient occlusion darkening toward the base of the blade.
+  float ao = mix(1.0 - uAO, 1.0, vAO);
+
+  // Subsurface scattering: when the viewer is roughly opposite the sun the
+  // blade glows, more strongly toward the thin tip.
+  float sss = pow(max(0.0, dot(V, -L)), 3.0) * uTranslucency * (0.2 + 0.8 * vT);
+
+  vec3  Hv   = normalize(L + V);
+  float spec = pow(max(0.0, dot(N, Hv)), mix(90.0, 5.0, uRoughness)) * uSpecular;
+
+  vec3 amb = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * uAmbient;
+  vec3 col = vCol * (1.0 + vWind * 0.12);   // bent blades catch a little more light
+
+  vec3 lit = col * (uSunColor * ndl + amb) * ao
+           + col * uSunColor * sss
+           + uSunColor * spec * ao;
+
+  lit = gp_fog(lit, length(cameraPosition - vW));
+  gl_FragColor = gp_out(lit, uExposure);
+}
+`;
+/* ==========================================================================
+   GROUND
+   ========================================================================== */
+export var GROUND_VS = `
+varying vec3 vW, vN;
+void main(){
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vW = wp.xyz;
+  vN = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+
+export var GROUND_FS = GLSL_NOISE + GLSL_COLOR + GLSL_FOG + `
+uniform vec3  uBaseColor, uSecColor;
+uniform float uPattern, uCheckerScale, uRoughness;
+uniform vec2  uPlateSize;
+uniform float uGrid, uGridSpacing, uGridOpacity;
+uniform vec3  uSunDir, uSunColor, uSkyColor, uGroundColor;
+uniform float uAmbient, uExposure;
+uniform sampler2D uDensTex;
+uniform float uShadow, uShadowStrength;
+uniform vec2  uShadowOffset;
+uniform float uAutoTex, uRockSlope, uRockBlend, uSnowOn, uSnowline, uSnowBlend;
+uniform vec3  uGrassCol, uDirtCol, uRockCol, uSnowCol;
+varying vec3 vW, vN;
+
+/* Analytically anti-aliased checker (filters the pattern by the pixel
+   footprint instead of point-sampling it, so distant ground stays calm). */
+float checkerAA(vec2 p){
+  vec2 w = fwidth(p) + 1e-4;
+  vec2 i = 2.0 * (abs(fract((p - 0.5*w) * 0.5) - 0.5) -
+                  abs(fract((p + 0.5*w) * 0.5) - 0.5)) / w;
+  return 0.5 - 0.5 * i.x * i.y;
+}
+float gridAA(vec2 p, float spacing){
+  vec2 c = p / spacing;
+  vec2 g = abs(fract(c - 0.5) - 0.5) / (fwidth(c) + 1e-5);
+  return 1.0 - min(min(g.x, g.y), 1.0);
+}
+
+void main(){
+  vec3 N = normalize(vN);
+  vec2 P = vW.xz;
+
+  /* ---- ground pattern --------------------------------------------------- */
+  vec3 col = uBaseColor;
+  if (uPattern > 0.5 && uPattern < 1.5){
+    col = mix(uBaseColor, uSecColor, checkerAA(P / max(uCheckerScale, 0.01)));
+  } else if (uPattern > 1.5 && uPattern < 2.5){
+    float d = length(P / (uPlateSize * 0.5));
+    col = mix(uBaseColor, uSecColor, smoothstep(0.05, 1.15, d));
+  } else if (uPattern > 2.5){
+    float n = fbm2(P * (0.16 / max(uCheckerScale, 0.01) * 2.5)) * 0.5 + 0.5;
+    float m = smoothstep(0.34, 0.66, n);
+    col = mix(uBaseColor, uSecColor, m);
+    col *= 0.88 + 0.24 * (snoise(P * 3.1) * 0.5 + 0.5);
+  }
+
+  /* ---- slope + altitude auto-texturing ----------------------------------
+     Layered by surface normal first (flat ground keeps grass, steep faces go
+     to rock) then by height for the snowline. Every threshold is broken up
+     with noise so the transitions read as terrain rather than contour bands,
+     and snow refuses to settle on anything close to vertical. */
+  if (uAutoTex > 0.5){
+    float brk = snoise(P * 0.09) * 0.5 + snoise(P * 0.31) * 0.25;
+    float ny = clamp(N.y + brk * 0.055, 0.0, 1.0);
+
+    float dirtM = 1.0 - smoothstep(0.86, 0.965, ny);
+    float rockM = 1.0 - smoothstep(uRockSlope - uRockBlend, uRockSlope + uRockBlend, ny);
+
+    vec3 g = uGrassCol * (0.9 + 0.2 * (snoise(P * 0.42) * 0.5 + 0.5));
+    vec3 t = mix(g, uDirtCol, clamp(dirtM, 0.0, 1.0));
+    t = mix(t, uRockCol * (0.85 + 0.3 * (snoise(P * 1.7) * 0.5 + 0.5)), clamp(rockM, 0.0, 1.0));
+
+    if (uSnowOn > 0.5){
+      float h = vW.y + brk * uSnowBlend * 0.5;
+      float snowM = smoothstep(uSnowline - uSnowBlend, uSnowline + uSnowBlend, h);
+      snowM *= smoothstep(0.52, 0.84, ny);
+      t = mix(t, uSnowCol, clamp(snowM, 0.0, 1.0));
+    }
+    col = t;
+  }
+
+  if (uGrid > 0.5){
+    float g2 = gridAA(P, max(uGridSpacing, 0.05));
+    col = mix(col, col * 0.34 + vec3(0.05), g2 * uGridOpacity);
+  }
+
+  /* ---- contact shadow ---------------------------------------------------
+     Cheap stand-in for a shadow map: the same density grid that limits how
+     much grass a brush stroke can pack into a cell is sampled again here,
+     offset along the sun's ground projection, and used to darken the plate.
+     Costs one texture fetch and reads as grass sitting IN the ground. */
+  float shade = 1.0;
+  if (uShadow > 0.5){
+    vec2 uv = P / uPlateSize + 0.5 + uShadowOffset;
+    float d = texture2D(uDensTex, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    shade = 1.0 - smoothstep(0.0, 1.0, d) * uShadowStrength;
+  }
+
+  vec3 L = uSunDir;
+  float ndl = max(0.0, dot(N, L));
+  vec3  V = normalize(cameraPosition - vW);
+  vec3  Hv = normalize(L + V);
+  float spec = pow(max(0.0, dot(N, Hv)), mix(70.0, 3.0, uRoughness)) * (1.0 - uRoughness) * 0.35;
+
+  vec3 amb = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * uAmbient;
+  vec3 lit = col * (uSunColor * ndl * shade + amb * mix(0.55, 1.0, shade))
+           + uSunColor * spec * shade;
+
+  lit = gp_fog(lit, length(cameraPosition - vW));
+  gl_FragColor = gp_out(lit, uExposure);
+}
+`;
+
+/* ==========================================================================
+   SKY — full-screen quad; the view ray is rebuilt from the inverse
+   view-projection so no geometry or HDRI is involved.
+   ========================================================================== */
+export var SKY_VS = `
+uniform mat4 uInvVP;
+varying vec3 vDir;
+void main(){
+  vec4 p = uInvVP * vec4(position.xy, 1.0, 1.0);
+  vDir = p.xyz / p.w - cameraPosition;
+  gl_Position = vec4(position.xy, 1.0, 1.0);
+}
+`;
+
+export var SKY_FS = GLSL_NOISE + GLSL_COLOR + `
+uniform vec3  uZenith, uHorizon, uSunColor, uSunDir, uFogColor;
+uniform float uExposure, uSunSize;
+varying vec3 vDir;
+
+void main(){
+  vec3 d = normalize(vDir);
+  float h = clamp(d.y, -1.0, 1.0);
+
+  // Gradient: horizon band compressed with a power curve so the transition
+  // sits low in the frame the way a real sky does.
+  float k = pow(clamp(h, 0.0, 1.0), 0.42);
+  vec3 col = mix(uHorizon, uZenith, k);
+
+  // Below the horizon fade into the fog colour so the plate edge dissolves.
+  col = mix(col, uFogColor, smoothstep(0.0, -0.16, h));
+
+  // Sun disc + broad forward-scattering halo.
+  float cd = max(0.0, dot(d, uSunDir));
+  float disc = smoothstep(0.9985, 0.99965, cd) * 14.0;
+  float halo = pow(cd, 220.0) * 2.2 + pow(cd, 12.0) * 0.30 + pow(cd, 3.0) * 0.07;
+  col += uSunColor * (disc + halo) * smoothstep(-0.12, 0.05, uSunDir.y);
+
+  gl_FragColor = gp_out(col, uExposure);
+}
+`;
+
+/* ==========================================================================
+   BALL — the draggable object that parts the grass.
+   ========================================================================== */
+export var BALL_VS = `
+varying vec3 vW, vN;
+void main(){
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vW = wp.xyz; vN = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+export var BALL_FS = GLSL_COLOR + GLSL_FOG + `
+uniform vec3  uSunDir, uSunColor, uSkyColor, uGroundColor, uColor;
+uniform float uAmbient, uExposure;
+varying vec3 vW, vN;
+void main(){
+  vec3 N = normalize(vN);
+  vec3 V = normalize(cameraPosition - vW);
+  float ndl = max(0.0, dot(N, uSunDir));
+  vec3 Hv = normalize(uSunDir + V);
+  float spec = pow(max(0.0, dot(N, Hv)), 46.0) * 0.55;
+  float rim  = pow(1.0 - max(0.0, dot(N, V)), 3.0) * 0.5;
+  vec3 amb = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * uAmbient;
+  vec3 lit = uColor * (uSunColor * ndl + amb) + uSunColor * spec + uSkyColor * rim;
+  lit = gp_fog(lit, length(cameraPosition - vW));
+  gl_FragColor = gp_out(lit, uExposure);
+}
+`;
+
+/* ==========================================================================
+   BRUSH RING — unlit overlay ribbon that follows the ground surface.
+   ========================================================================== */
+export var RING_VS = `
+attribute float aAlpha;
+varying float vA;
+void main(){
+  vA = aAlpha;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+export var RING_FS = `
+uniform vec3 uColor;
+uniform float uOpacity;
+varying float vA;
+void main(){
+  gl_FragColor = vec4(uColor, vA * uOpacity);
+}
+`;
+/* ==========================================================================
+   3b. WORLD OBJECT SHADERS
+   --------------------------------------------------------------------------
+   One material serves every placed object — trees, buildings, props, people,
+   vehicles. Geometry is non-indexed with baked face normals, which gives the
+   flat-shaded low-poly look without a second pass.
+
+   Vertex attributes (baked into the asset):
+     position   vec3
+     normal     vec3   face normal, flat shaded
+     aColSlot   vec4   rgb = baked colour, w = palette slot (0 = use rgb)
+     aPS        vec2   x = animated part id, y = wind sway weight
+
+   Instance attributes:
+     iPosSeed   vec4   world position + per-instance random
+     iQuat      vec4   orientation
+     iSclSway   vec4   scale.xyz + wind response multiplier
+     iPal0/1/2  vec3   the three recolourable palette slots
+     iAnim      vec4   x = anim phase, y = anim rate, z = pose, w = selected
+   ========================================================================== */
+/* ==========================================================================
+   WATER — a grid that only exists where the terrain sits below the water
+   line. Depth is baked per vertex on the CPU, which is what drives both the
+   deep/shallow colour ramp and the shoreline foam without a depth prepass.
+   ========================================================================== */
+export var WATER_VS = `
+attribute float aDepth;
+uniform float uTime, uWaveScale, uWaveSpeed, uLevel, uSimulate;
+varying float vDepth;
+varying vec3 vW;
+varying vec2 vRipple;
+
+void main(){
+  vec3 p = position;
+  vDepth = aDepth;
+  float t = uTime * uWaveSpeed * uSimulate;
+  // Two crossing wave trains: enough motion to read as water, cheap enough to
+  // run on a 128x128 grid every frame.
+  float w = sin(p.x * uWaveScale * 1.7 + t * 1.6) * 0.5
+          + sin((p.x * 0.7 + p.z) * uWaveScale * 2.3 - t * 2.1) * 0.3
+          + sin(p.z * uWaveScale * 3.1 + t * 2.7) * 0.2;
+  p.y = uLevel + w * 0.075 * smoothstep(0.0, 0.6, aDepth);
+  vRipple = vec2(
+    cos(p.x * uWaveScale * 1.7 + t * 1.6) * 0.09 + cos(p.z * uWaveScale * 3.1 + t * 2.7) * 0.05,
+    cos((p.x * 0.7 + p.z) * uWaveScale * 2.3 - t * 2.1) * 0.08
+  );
+  vW = p;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}
+`;
+
+export var WATER_FS = GLSL_COLOR + GLSL_FOG + `
+uniform vec3 uShallow, uDeep, uSunDir, uSunColor, uSkyColor;
+uniform float uExposure, uOpacity, uFoam;
+varying float vDepth;
+varying vec3 vW;
+varying vec2 vRipple;
+
+void main(){
+  vec3 N = normalize(vec3(vRipple.x, 1.0, vRipple.y));
+  vec3 V = normalize(cameraPosition - vW);
+  float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
+
+  vec3 col = mix(uShallow, uDeep, smoothstep(0.0, 3.2, vDepth));
+  col = mix(col, uSkyColor * 1.6, fres * 0.7);
+
+  vec3 Hv = normalize(uSunDir + V);
+  col += uSunColor * pow(max(0.0, dot(N, Hv)), 180.0) * 0.9;
+
+  // Shoreline foam: a band where the water is only a few centimetres deep,
+  // broken up by the ripple so it is not a perfect contour line.
+  float band = 1.0 - smoothstep(0.0, 0.38, vDepth - abs(vRipple.x) * 0.9);
+  float foam = clamp(band, 0.0, 1.0) * uFoam;
+  col = mix(col, vec3(0.92, 0.96, 0.98), foam * 0.75);
+
+  float a = mix(uOpacity * 0.55, uOpacity, smoothstep(0.0, 1.2, vDepth));
+  a = max(a, foam * 0.9);
+  col = gp_fog(col, length(cameraPosition - vW));
+  vec4 o = gp_out(col, uExposure);
+  o.a = a * smoothstep(0.0, 0.06, vDepth);
+  gl_FragColor = o;
+}
+`;
+
+/* ==========================================================================
+   ROAD — ribbon geometry. Lane markings, curbs and wear are all shader-side
+   off the ribbon's (across, along) coordinates, so a road needs no textures.
+   ========================================================================== */
+export var ROAD_VS = `
+attribute vec2 aUV;      // x = -1..1 across the ribbon, y = metres along it
+attribute float aKind;   // 0 road surface, 1 sidewalk, 2 junction patch
+varying vec2 vUV;
+varying vec3 vW, vN;
+varying float vKind;
+void main(){
+  vUV = aUV; vKind = aKind;
+  vN = normal;
+  vW = position;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}
+`;
+
+export var ROAD_FS = GLSL_NOISE + GLSL_COLOR + GLSL_FOG + `
+uniform vec3 uSurface, uEdge, uLine, uWalk;
+uniform float uMarkings, uExposure, uAmbient, uGrain, uWater, uTime;
+uniform vec3 uSunDir, uSunColor, uSkyColor, uGroundColor;
+varying vec2 vUV;
+varying vec3 vW, vN;
+varying float vKind;
+
+void main(){
+  vec3 col = (vKind > 0.5 && vKind < 1.5) ? uWalk : uSurface;
+  float a = abs(vUV.x);
+
+  /* Rivers reuse this ribbon but shade as water: a scrolling ripple normal,
+     a fresnel sky term and foam where the banks pinch in. */
+  if (uWater > 0.5){
+    vec2 rp = vW.xz * 0.7 + vec2(uTime * 0.35, uTime * 0.22);
+    float r1 = snoise(rp), r2 = snoise(rp * 2.3 - 4.1);
+    vec3 N = normalize(vec3(r1 * 0.22, 1.0, r2 * 0.22));
+    vec3 V = normalize(cameraPosition - vW);
+    float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
+    col = mix(uSurface, uEdge, 0.5 + 0.5 * r2);
+    col = mix(col, uSkyColor * 1.7, fres * 0.65);
+    vec3 Hw = normalize(uSunDir + V);
+    col += uSunColor * pow(max(0.0, dot(N, Hw)), 150.0) * 0.8;
+    float bank = smoothstep(0.72, 0.99, a);
+    col = mix(col, vec3(0.9, 0.94, 0.96), bank * 0.5);
+    col = gp_fog(col, length(cameraPosition - vW));
+    gl_FragColor = gp_out(col, uExposure);
+    return;
+  }
+
+  if (vKind < 0.5){
+    // darker, more worn toward the shoulder
+    col = mix(col, uEdge, smoothstep(0.55, 1.0, a));
+    if (uMarkings > 0.5){
+      // dashed centre line
+      float dash = step(0.5, fract(vUV.y * 0.14));
+      float centre = 1.0 - smoothstep(0.028, 0.055, a);
+      col = mix(col, uLine, centre * dash);
+      // solid edge lines
+      float edge = smoothstep(0.80, 0.845, a) - smoothstep(0.875, 0.92, a);
+      col = mix(col, uLine, clamp(edge, 0.0, 1.0) * 0.85);
+    }
+  } else if (vKind > 1.5){
+    col = mix(col, uEdge, 0.12);
+  } else {
+    // paving joints across the sidewalk
+    float j = 1.0 - smoothstep(0.02, 0.06, abs(fract(vUV.y * 0.62) - 0.5) * 2.0 - 0.9);
+    col = mix(col, col * 0.86, clamp(j, 0.0, 1.0));
+  }
+
+  col *= 0.94 + 0.12 * (snoise(vW.xz * 2.7) * 0.5 + 0.5) * uGrain;
+
+  vec3 N = normalize(vN);
+  float ndl = max(0.0, dot(N, uSunDir));
+  vec3 amb = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * uAmbient;
+  vec3 lit = col * (uSunColor * ndl + amb);
+  lit = gp_fog(lit, length(cameraPosition - vW));
+  gl_FragColor = gp_out(lit, uExposure);
+}
+`;
+
+/* ==========================================================================
+   OUTLINE — unlit lines for selection boxes, spline control cages and the
+   transform gizmo.
+   ========================================================================== */
+export var LINE_VS = `
+attribute vec3 aColor;
+varying vec3 vC;
+void main(){
+  vC = aColor;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+export var LINE_FS = `
+uniform float uOpacity;
+varying vec3 vC;
+void main(){ gl_FragColor = vec4(vC, uOpacity); }
+`;
+

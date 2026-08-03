@@ -1,0 +1,490 @@
+/* ============================================================================
+   LAYOUT AND CHROME
+   ========================================================================== */
+/* Two rows: the bar, then everything else. The chrome that sits over the world
+   — rail, panel, hint, marquee — is absolutely positioned but given an explicit
+   grid row, so the row is its containing block and `top: 0` means "under the
+   bar" rather than "top of the window". That keeps placement independent of
+   the order things happen to be rendered in: the canvas has to exist before the
+   engine boots, so it is rendered above the bar in the tree, not below it. */
+.app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: var(--topbar) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+/* With the chrome hidden (H) there is no bar, so its row collapses and the
+   world gets the whole window. */
+.app.bare { grid-template-rows: 0 minmax(0, 1fr); }
+.app > .topbar { grid-row: 1 / 2; grid-column: 1 / 2; }
+.app > .stage,
+.app > .rail,
+.app > .panel,
+.app > .panel-toggle,
+.app > .hint,
+.app > .marquee { grid-row: 2 / 3; grid-column: 1 / 2; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s3) 0 var(--s4);
+  background: var(--loam);
+  border-bottom: 1px solid var(--rule);
+  z-index: 30;
+}
+.brand { display: flex; align-items: center; gap: 9px; padding-right: var(--s2); }
+.brand svg { width: 22px; height: 22px; color: var(--sun); }
+.brand b {
+  font-size: var(--fs3);
+  font-weight: 700;
+  font-variation-settings: "wdth" 118;
+  white-space: nowrap;
+}
+.sep { width: 1px; height: 24px; background: var(--rule); flex: 0 0 auto; margin: 0 var(--s1); }
+.grow { flex: 1 1 auto; }
+
+.saved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs1);
+  color: var(--straw-2);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--slow) var(--ease);
+}
+.saved.on { opacity: 1; }
+.saved svg { width: 14px; height: 14px; color: var(--moss); }
+
+.sun-btn {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 99px;
+  background: var(--husk);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+  transition: background var(--dur) var(--ease);
+}
+.sun-btn:hover { background: var(--husk-2); }
+.sun-btn .dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 99px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 14%);
+}
+.sun-btn b { font-family: var(--fm); font-size: var(--fs0); font-weight: 500; color: var(--chalk); }
+
+/* ---------- stage ---------- */
+.stage { position: relative; min-height: 0; overflow: hidden; }
+.view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.view.drag { cursor: grabbing; }
+
+/* ============================================================================
+   THE STATION RAIL — the signature
+
+   Four stations, stacked with no gaps and separated by hairlines. Every glyph
+   is drawn in the same 44x26 frame with the same ground line at y=21, so the
+   rail reads as four strata of one continuous ground: whichever station you
+   are at, you are working on the same piece of earth.
+   ========================================================================== */
+.rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--rail);
+  background: var(--loam);
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+}
+.station {
+  width: 100%;
+  height: 86px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--straw);
+  position: relative;
+  border-bottom: 1px solid var(--rule);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.station svg { width: 44px; height: 26px; overflow: visible; }
+.station .ground { stroke-width: 2.4; }
+.station .form { stroke-width: 2; }
+.station span {
+  font-size: 10px;
+  font-weight: 700;
+  font-variation-settings: "wdth" 118;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.station:hover { background: var(--husk); color: var(--chalk); }
+.station[aria-pressed="true"] { background: var(--sun-wash); color: var(--sun); }
+.station[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: -1px;
+  width: 4px;
+  background: var(--sun);
+}
+.station[aria-pressed="true"] .ground { stroke-width: 3.4; }
+
+/* The one orchestrated moment: on the first paint of the session each stratum
+   draws itself in, top to bottom. Scoped to .intro so switching station does
+   not replay it. */
+.rail.intro .ground {
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: strata 520ms var(--ease) forwards;
+}
+.rail.intro .station:nth-child(1) .ground { animation-delay: 60ms; }
+.rail.intro .station:nth-child(2) .ground { animation-delay: 160ms; }
+.rail.intro .station:nth-child(3) .ground { animation-delay: 260ms; }
+.rail.intro .station:nth-child(4) .ground { animation-delay: 360ms; }
+@keyframes strata { to { stroke-dashoffset: 0; } }
+
+.rail-foot { margin-top: auto; padding: var(--s3); display: flex; justify-content: center; }
+
+/* ---------- settings panel ---------- */
+.panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--panelw);
+  background: var(--loam);
+  border-left: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transition: transform var(--slow) var(--ease);
+}
+.panel.closed { transform: translateX(100%); }
+.panel-head { flex: 0 0 auto; padding: var(--s4) var(--s4) var(--s3); border-bottom: 1px solid var(--rule); }
+.panel-title { font-size: var(--fs4); font-weight: 700; font-variation-settings: "wdth" 118; line-height: 1.15; display: block; }
+.panel-lede { display: block; margin-top: 5px; font-size: var(--fs1); color: var(--straw); line-height: 1.5; max-width: 30ch; }
+.panel-lede b { color: var(--chalk); font-weight: 600; }
+.panel-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--s4) var(--s4) var(--s6); }
+
+.panel-toggle {
+  position: absolute;
+  top: var(--s3);
+  right: calc(var(--panelw) + var(--s3));
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r2);
+  background: rgb(31 27 20 / 90%);
+  border: 1px solid var(--rule);
+  color: var(--straw);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 21;
+  backdrop-filter: blur(10px);
+  transition: right var(--slow) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.panel-toggle:hover { background: var(--husk); color: var(--chalk); }
+.panel-toggle svg { width: 16px; height: 16px; transition: transform var(--slow) var(--ease); }
+.panel-toggle.flipped { right: var(--s3); }
+.panel-toggle.flipped svg { transform: rotate(180deg); }
+
+/* ---------- panel tabs ---------- */
+.panel-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 3px;
+  padding: var(--s2) var(--s2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.panel-tabs button {
+  flex: 1 1 0;
+  height: 30px;
+  border-radius: var(--r2) var(--r2) 0 0;
+  font-size: var(--fs1);
+  font-weight: 600;
+  color: var(--straw-2);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.panel-tabs button:hover { color: var(--chalk); background: var(--husk); }
+.panel-tabs button[aria-selected="true"] { color: var(--sun); background: var(--sun-wash); }
+
+/* ---------- the tree ---------- */
+.tree {
+  background: var(--well);
+  border-radius: var(--r2);
+  padding: 5px 0;
+  max-height: 42vh;
+  overflow: auto;
+  margin-bottom: var(--s3);
+}
+.tree-empty { padding: var(--s3) var(--s4); font-size: var(--fs1); color: var(--straw-2); line-height: 1.5; }
+.node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding-right: 4px;
+  transition: background var(--dur) var(--ease);
+}
+.node:hover { background: var(--husk); }
+.node.on { background: var(--sun-wash); }
+.node.on .node-name { color: var(--sun); }
+.node.root .node-name { color: var(--chalk); font-weight: 600; }
+.node .twist {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--straw-2);
+}
+.node button.twist:hover { color: var(--chalk); }
+.node .twist svg { width: 12px; height: 12px; transition: transform var(--dur) var(--ease); }
+.node .twist.open svg { transform: rotate(90deg); }
+.node .twist:disabled { opacity: 0; }
+.node-ic { width: 14px; height: 14px; flex: 0 0 auto; color: var(--straw-2); }
+.node-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.node-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--fs1);
+  color: var(--straw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.node-name.as-label { cursor: default; }
+.node-count { font-size: 10px; color: var(--straw-2); flex: 0 0 auto; }
+.node-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r1);
+  color: var(--straw-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.node:hover .node-btn { opacity: 1; }
+.node-btn:hover { background: rgb(236 116 88 / 16%); color: var(--clay); }
+.node-btn svg { width: 13px; height: 13px; }
+.rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  background: var(--husk);
+  border: 1px solid var(--sun);
+  border-radius: var(--r1);
+  padding: 0 5px;
+  font-size: var(--fs1);
+  color: var(--chalk);
+}
+
+/* "All settings" — the one disclosure that replaced a Simple/Advanced switch */
+.more { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--rule); }
+.more-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  font-size: var(--fs1);
+  font-weight: 600;
+  color: var(--straw);
+  transition: color var(--dur) var(--ease);
+}
+.more-btn:hover { color: var(--chalk); }
+.more-btn svg { width: 14px; height: 14px; transition: transform var(--dur) var(--ease); }
+.more.open .more-btn svg { transform: rotate(90deg); }
+.more-body { padding-top: var(--s4); }
+
+/* ---------- hint strip ---------- */
+.hint {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--s4);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 9px 14px;
+  border-radius: 99px;
+  background: rgb(22 19 14 / 82%);
+  border: 1px solid var(--rule);
+  backdrop-filter: blur(12px);
+  font-size: var(--fs1);
+  color: var(--straw);
+  z-index: 15;
+  pointer-events: none;
+  max-width: min(72vw, 760px);
+}
+.hint em { font-style: normal; color: var(--sun); font-weight: 600; }
+
+/* ---------- selection marquee ---------- */
+.marquee {
+  position: absolute;
+  border: 1.5px solid var(--sun);
+  background: var(--sun-wash);
+  border-radius: var(--r1);
+  pointer-events: none;
+  z-index: 16;
+}
+
+/* ---------- boot / failure screens ---------- */
+.boot,
+.fatal {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--soil);
+  padding: var(--s6);
+  text-align: center;
+}
+.boot { transition: opacity 320ms var(--ease); }
+.boot.out { opacity: 0; pointer-events: none; }
+.boot .in { display: flex; flex-direction: column; align-items: center; gap: var(--s4); }
+.boot .bar { width: 170px; height: 3px; background: var(--husk); border-radius: 99px; overflow: hidden; }
+.boot .bar i { display: block; width: 38%; height: 100%; background: var(--sun); border-radius: 99px; animation: sweep 1.05s var(--ease) infinite; }
+@keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(365%); } }
+.boot small {
+  color: var(--straw-2);
+  font-size: var(--fs0);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-variation-settings: "wdth" 118;
+  font-weight: 600;
+}
+.fatal .in { max-width: 440px; }
+.fatal svg { width: 42px; height: 42px; color: var(--clay); margin-bottom: var(--s4); }
+.fatal h2 { font-size: 22px; font-weight: 700; font-variation-settings: "wdth" 118; margin-bottom: var(--s3); }
+.fatal p { color: var(--straw); line-height: 1.65; font-size: var(--fs2); }
+
+/* ============================================================================
+   RESPONSIVE
+   ========================================================================== */
+
+/* The top bar drops to icons before anything has a chance to squash. The
+   wordmark and the two labelled buttons go first — their icons already say
+   what they do, and the tooltips still name them. */
+@media (width <= 820px) {
+  .brand b,
+  .saved span,
+  .btn-label { display: none; }
+  .btn.has-label { width: var(--ctrlh); padding: 0; }
+}
+
+@media (width <= 1120px) {
+  .panel { box-shadow: -20px 0 50px rgb(0 0 0 / 50%); transform: translateX(100%); }
+  .panel.open { transform: translateX(0); }
+  .panel-toggle { right: var(--s3); }
+  .panel-toggle:not(.flipped) { right: calc(var(--panelw) + var(--s3)); }
+}
+
+@media (width <= 760px) {
+  :root { --rail: 66px; --panelw: min(340px, 100vw); }
+
+  .hint { display: none; }
+}
+
+/* ============================================================================
+   RENDER — the ray-traced still.
+
+   Floats over the stage rather than covering it: the traced image is being
+   drawn on the canvas underneath, and a scrim over it would hide the one thing
+   the panel is about.
+   ========================================================================== */
+.render-btn {
+  display: flex; align-items: center; gap: 7px;
+  height: 32px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--soil-2); color: var(--straw-1);
+  font: 600 12.5px/1 var(--ui); letter-spacing: .01em;
+  cursor: pointer; transition: background .16s, border-color .16s, color .16s;
+}
+.render-btn svg { width: 15px; height: 15px; }
+.render-btn:hover { background: var(--soil-3); color: var(--straw-0); border-color: var(--line-2); }
+.render-btn.on { border-color: var(--gold); color: var(--gold); }
+.render-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.render-panel {
+  position: absolute; right: 14px; bottom: 14px; z-index: 40;
+  width: min(340px, calc(100vw - 28px));
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--soil-1) 94%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line-2); border-radius: 14px;
+  box-shadow: 0 18px 46px rgb(0 0 0 / .5);
+}
+.render-head { display: flex; align-items: center; justify-content: space-between; }
+
+.render-note { margin: 0; font: 400 12px/1.55 var(--ui); color: var(--straw-2); }
+.render-note.dim { color: var(--straw-3, var(--straw-2)); font-size: 11.5px; opacity: .85; }
+.render-note.err { color: var(--clay); }
+
+.render-quality { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.render-quality .chip {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  padding: 9px 8px; text-align: left;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--soil-2); color: var(--straw-1); cursor: pointer;
+  transition: background .16s, border-color .16s;
+}
+.render-quality .chip b { font: 600 12px/1 var(--ui); }
+.render-quality .chip span { font: 400 10.5px/1.3 var(--ui); color: var(--straw-2); }
+.render-quality .chip:hover { background: var(--soil-3); }
+.render-quality .chip.on { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 12%, var(--soil-2)); }
+.render-quality .chip.on b { color: var(--gold); }
+.render-quality .chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.render-progress { display: flex; flex-direction: column; gap: 7px; }
+.render-progress .bar {
+  height: 5px; border-radius: 3px; overflow: hidden;
+  background: var(--soil-3);
+}
+.render-progress .bar i {
+  display: block; height: 100%; background: var(--gold);
+  transition: width .3s linear;
+}
+.render-stats {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 11px; color: var(--straw-2);
+}
+.render-actions { display: flex; gap: 8px; }
+.render-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+
+.spinner {
+  display: inline-block; width: 11px; height: 11px; margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid var(--line-2); border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  .render-progress .bar i { transition: none; }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "grass-painter",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "A browser world builder for people who have never opened a 3D tool.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "0.151.0",
+    "three-gpu-pathtracer": "^0.0.23",
+    "three-mesh-bvh": "^0.7.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "acorn": "^8.18.0",
+    "acorn-walk": "^8.3.5",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.3",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "vite": "^6.0.7"
+  }
+}

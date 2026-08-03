@@ -1,0 +1,181 @@
+/* ==========================================================================
+   3b. WORLD OBJECT SHADERS
+   --------------------------------------------------------------------------
+   One material serves every placed object — trees, buildings, props, people,
+   vehicles. Geometry is non-indexed with baked face normals, which gives the
+   flat-shaded low-poly look without a second pass.
+
+   Vertex attributes (baked into the asset):
+     position   vec3
+     normal     vec3   face normal, flat shaded
+     aColSlot   vec4   rgb = baked colour, w = palette slot (0 = use rgb)
+     aPS        vec2   x = animated part id, y = wind sway weight
+
+   Instance attributes:
+     iPosSeed   vec4   world position + per-instance random
+     iQuat      vec4   orientation
+     iSclSway   vec4   scale.xyz + wind response multiplier
+     iPal0/1/2  vec3   the three recolourable palette slots
+     iAnim      vec4   x = anim phase, y = anim rate, z = pose, w = selected
+   ========================================================================== */
+/* ==========================================================================
+   WATER — a grid that only exists where the terrain sits below the water
+   line. Depth is baked per vertex on the CPU, which is what drives both the
+   deep/shallow colour ramp and the shoreline foam without a depth prepass.
+   ========================================================================== */
+var WATER_VS = `
+attribute float aDepth;
+uniform float uTime, uWaveScale, uWaveSpeed, uLevel, uSimulate;
+varying float vDepth;
+varying vec3 vW;
+varying vec2 vRipple;
+
+void main(){
+  vec3 p = position;
+  vDepth = aDepth;
+  float t = uTime * uWaveSpeed * uSimulate;
+  // Two crossing wave trains: enough motion to read as water, cheap enough to
+  // run on a 128x128 grid every frame.
+  float w = sin(p.x * uWaveScale * 1.7 + t * 1.6) * 0.5
+          + sin((p.x * 0.7 + p.z) * uWaveScale * 2.3 - t * 2.1) * 0.3
+          + sin(p.z * uWaveScale * 3.1 + t * 2.7) * 0.2;
+  p.y = uLevel + w * 0.075 * smoothstep(0.0, 0.6, aDepth);
+  vRipple = vec2(
+    cos(p.x * uWaveScale * 1.7 + t * 1.6) * 0.09 + cos(p.z * uWaveScale * 3.1 + t * 2.7) * 0.05,
+    cos((p.x * 0.7 + p.z) * uWaveScale * 2.3 - t * 2.1) * 0.08
+  );
+  vW = p;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}
+`;
+
+var WATER_FS = GLSL_COLOR + GLSL_FOG + `
+uniform vec3 uShallow, uDeep, uSunDir, uSunColor, uSkyColor;
+uniform float uExposure, uOpacity, uFoam;
+varying float vDepth;
+varying vec3 vW;
+varying vec2 vRipple;
+
+void main(){
+  vec3 N = normalize(vec3(vRipple.x, 1.0, vRipple.y));
+  vec3 V = normalize(cameraPosition - vW);
+  float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
+
+  vec3 col = mix(uShallow, uDeep, smoothstep(0.0, 3.2, vDepth));
+  col = mix(col, uSkyColor * 1.6, fres * 0.7);
+
+  vec3 Hv = normalize(uSunDir + V);
+  col += uSunColor * pow(max(0.0, dot(N, Hv)), 180.0) * 0.9;
+
+  // Shoreline foam: a band where the water is only a few centimetres deep,
+  // broken up by the ripple so it is not a perfect contour line.
+  float band = 1.0 - smoothstep(0.0, 0.38, vDepth - abs(vRipple.x) * 0.9);
+  float foam = clamp(band, 0.0, 1.0) * uFoam;
+  col = mix(col, vec3(0.92, 0.96, 0.98), foam * 0.75);
+
+  float a = mix(uOpacity * 0.55, uOpacity, smoothstep(0.0, 1.2, vDepth));
+  a = max(a, foam * 0.9);
+  col = gp_fog(col, length(cameraPosition - vW));
+  vec4 o = gp_out(col, uExposure);
+  o.a = a * smoothstep(0.0, 0.06, vDepth);
+  gl_FragColor = o;
+}
+`;
+
+/* ==========================================================================
+   ROAD — ribbon geometry. Lane markings, curbs and wear are all shader-side
+   off the ribbon's (across, along) coordinates, so a road needs no textures.
+   ========================================================================== */
+var ROAD_VS = `
+attribute vec2 aUV;      // x = -1..1 across the ribbon, y = metres along it
+attribute float aKind;   // 0 road surface, 1 sidewalk, 2 junction patch
+varying vec2 vUV;
+varying vec3 vW, vN;
+varying float vKind;
+void main(){
+  vUV = aUV; vKind = aKind;
+  vN = normal;
+  vW = position;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}
+`;
+
+var ROAD_FS = GLSL_NOISE + GLSL_COLOR + GLSL_FOG + `
+uniform vec3 uSurface, uEdge, uLine, uWalk;
+uniform float uMarkings, uExposure, uAmbient, uGrain, uWater, uTime;
+uniform vec3 uSunDir, uSunColor, uSkyColor, uGroundColor;
+varying vec2 vUV;
+varying vec3 vW, vN;
+varying float vKind;
+
+void main(){
+  vec3 col = (vKind > 0.5 && vKind < 1.5) ? uWalk : uSurface;
+  float a = abs(vUV.x);
+
+  /* Rivers reuse this ribbon but shade as water: a scrolling ripple normal,
+     a fresnel sky term and foam where the banks pinch in. */
+  if (uWater > 0.5){
+    vec2 rp = vW.xz * 0.7 + vec2(uTime * 0.35, uTime * 0.22);
+    float r1 = snoise(rp), r2 = snoise(rp * 2.3 - 4.1);
+    vec3 N = normalize(vec3(r1 * 0.22, 1.0, r2 * 0.22));
+    vec3 V = normalize(cameraPosition - vW);
+    float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
+    col = mix(uSurface, uEdge, 0.5 + 0.5 * r2);
+    col = mix(col, uSkyColor * 1.7, fres * 0.65);
+    vec3 Hw = normalize(uSunDir + V);
+    col += uSunColor * pow(max(0.0, dot(N, Hw)), 150.0) * 0.8;
+    float bank = smoothstep(0.72, 0.99, a);
+    col = mix(col, vec3(0.9, 0.94, 0.96), bank * 0.5);
+    col = gp_fog(col, length(cameraPosition - vW));
+    gl_FragColor = gp_out(col, uExposure);
+    return;
+  }
+
+  if (vKind < 0.5){
+    // darker, more worn toward the shoulder
+    col = mix(col, uEdge, smoothstep(0.55, 1.0, a));
+    if (uMarkings > 0.5){
+      // dashed centre line
+      float dash = step(0.5, fract(vUV.y * 0.14));
+      float centre = 1.0 - smoothstep(0.028, 0.055, a);
+      col = mix(col, uLine, centre * dash);
+      // solid edge lines
+      float edge = smoothstep(0.80, 0.845, a) - smoothstep(0.875, 0.92, a);
+      col = mix(col, uLine, clamp(edge, 0.0, 1.0) * 0.85);
+    }
+  } else if (vKind > 1.5){
+    col = mix(col, uEdge, 0.12);
+  } else {
+    // paving joints across the sidewalk
+    float j = 1.0 - smoothstep(0.02, 0.06, abs(fract(vUV.y * 0.62) - 0.5) * 2.0 - 0.9);
+    col = mix(col, col * 0.86, clamp(j, 0.0, 1.0));
+  }
+
+  col *= 0.94 + 0.12 * (snoise(vW.xz * 2.7) * 0.5 + 0.5) * uGrain;
+
+  vec3 N = normalize(vN);
+  float ndl = max(0.0, dot(N, uSunDir));
+  vec3 amb = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * uAmbient;
+  vec3 lit = col * (uSunColor * ndl + amb);
+  lit = gp_fog(lit, length(cameraPosition - vW));
+  gl_FragColor = gp_out(lit, uExposure);
+}
+`;
+
+/* ==========================================================================
+   OUTLINE — unlit lines for selection boxes, spline control cages and the
+   transform gizmo.
+   ========================================================================== */
+var LINE_VS = `
+attribute vec3 aColor;
+varying vec3 vC;
+void main(){
+  vC = aColor;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+var LINE_FS = `
+uniform float uOpacity;
+varying vec3 vC;
+void main(){ gl_FragColor = vec4(vC, uOpacity); }
+`;

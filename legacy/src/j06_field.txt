@@ -1,0 +1,274 @@
+/* ==========================================================================
+   8. PUSH FIELD
+   --------------------------------------------------------------------------
+   A low-resolution 2D field covering the plate. Each texel holds a signed
+   displacement vector (in the same "bend radians" unit the wind uses) and its
+   velocity, integrated as a damped harmonic oscillator:
+
+        a = (target - D) * K  -  V * C        K = w^2,  C = 2*zeta*w
+
+   Because D chases the target through a spring rather than being assigned to
+   it, three things fall out for free:
+     * the grass parts around a stationary cursor,
+     * it springs back with overshoot instead of snapping when the cursor
+       leaves,
+     * and a fast sweep leaves a bent wake that recovers behind you.
+   ========================================================================== */
+var Field = {
+  n: FIELD_N,
+  Dx: null, Dz: null, Vx: null, Vz: null, Tx: null, Tz: null,
+  data: null, tex: null,
+  enc: 3.0,
+  live: false,
+  inf: []
+};
+
+function initField() {
+  var n = Field.n, c = n * n;
+  Field.Dx = new Float32Array(c); Field.Dz = new Float32Array(c);
+  Field.Vx = new Float32Array(c); Field.Vz = new Float32Array(c);
+  Field.Tx = new Float32Array(c); Field.Tz = new Float32Array(c);
+  Field.data = new Uint8Array(c * 4);
+  for (var i = 0; i < c; i++) { Field.data[i * 4] = 128; Field.data[i * 4 + 1] = 128; Field.data[i * 4 + 3] = 255; }
+  Field.tex = new THREE.DataTexture(Field.data, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+  Field.tex.minFilter = THREE.LinearFilter;
+  Field.tex.magFilter = THREE.LinearFilter;
+  Field.tex.wrapS = Field.tex.wrapT = THREE.ClampToEdgeWrapping;
+  Field.tex.needsUpdate = true;
+}
+
+/* Queue an influence for this frame. vx/vz are the influencer's ground
+   velocity, which biases the push downstream and produces the wake. */
+function pushInfluence(x, z, radius, strength, vx, vz) {
+  Field.inf.push({ x: x, z: z, r: radius, s: strength, vx: vx || 0, vz: vz || 0 });
+}
+
+function updateField(dt) {
+  var n = Field.n, c = n * n, p = state.plate, it = state.interact;
+  var inf = Field.inf;
+
+  if (!Field.live && inf.length === 0) { Field.inf.length = 0; return; }
+
+  Field.Tx.fill(0); Field.Tz.fill(0);
+
+  var cw = p.width / n, cd = p.depth / n;
+  for (var q = 0; q < inf.length; q++) {
+    var f = inf[q], r = f.r, r2 = r * r;
+    var i0 = clamp(Math.floor((f.x - r) / p.width * n + n * 0.5), 0, n - 1);
+    var i1 = clamp(Math.ceil ((f.x + r) / p.width * n + n * 0.5), 0, n - 1);
+    var j0 = clamp(Math.floor((f.z - r) / p.depth * n + n * 0.5), 0, n - 1);
+    var j1 = clamp(Math.ceil ((f.z + r) / p.depth * n + n * 0.5), 0, n - 1);
+    for (var j = j0; j <= j1; j++) {
+      var wz = (j + 0.5) / n * p.depth - p.depth * 0.5;
+      for (var i = i0; i <= i1; i++) {
+        var wx = (i + 0.5) / n * p.width - p.width * 0.5;
+        var dx = wx - f.x, dz = wz - f.z;
+        var d2 = dx * dx + dz * dz;
+        if (d2 > r2) continue;
+        var d = Math.sqrt(d2);
+        var u = d / r;
+        var w = 1 - smoothstep(0, 1, u);      // soft radial falloff
+        var idx = j * n + i;
+        if (d > 1e-4) {
+          var inv = 1 / d;
+          Field.Tx[idx] += dx * inv * f.s * w;
+          Field.Tz[idx] += dz * inv * f.s * w;
+        }
+        // Downstream bias: grass ahead of a moving influencer gets shoved
+        // along its direction of travel, which is what reads as a wake.
+        Field.Tx[idx] += f.vx * w * it.wake;
+        Field.Tz[idx] += f.vz * w * it.wake;
+      }
+    }
+  }
+  Field.inf.length = 0;
+
+  // Sub-step so a long frame can never make the spring explode.
+  var steps = clamp(Math.ceil(dt / (1 / 90)), 1, 4), h = dt / steps;
+  var w0 = Math.max(0.5, it.recovery), K = w0 * w0, C = 2 * clamp(it.damping, 0.05, 2) * w0;
+  var Dx = Field.Dx, Dz = Field.Dz, Vx = Field.Vx, Vz = Field.Vz, Tx = Field.Tx, Tz = Field.Tz;
+  var energy = 0;
+
+  for (var s = 0; s < steps; s++) {
+    var last = (s === steps - 1);
+    energy = 0;
+    for (var k = 0; k < c; k++) {
+      var ax = (Tx[k] - Dx[k]) * K - Vx[k] * C;
+      var az = (Tz[k] - Dz[k]) * K - Vz[k] * C;
+      var vx = Vx[k] + ax * h, vz = Vz[k] + az * h;
+      var dxv = Dx[k] + vx * h, dzv = Dz[k] + vz * h;
+      Vx[k] = vx; Vz[k] = vz; Dx[k] = dxv; Dz[k] = dzv;
+      if (last) energy += Math.abs(dxv) + Math.abs(dzv) + Math.abs(vx) + Math.abs(vz);
+    }
+  }
+
+  // Encode to the texture (signed -> 0..255 around 128).
+  var data = Field.data, e = Field.enc, inv2 = 0.5 / e;
+  for (var m = 0; m < c; m++) {
+    var a = (Dx[m] * inv2 + 0.5) * 255;
+    var b = (Dz[m] * inv2 + 0.5) * 255;
+    data[m * 4]     = a < 0 ? 0 : (a > 255 ? 255 : a | 0);
+    data[m * 4 + 1] = b < 0 ? 0 : (b > 255 ? 255 : b | 0);
+  }
+  Field.tex.needsUpdate = true;
+  Field.live = energy > 0.004 * c * 0.02;
+}
+
+/* ==========================================================================
+   UNIFORM SYNC — the only bridge from `state` into the GPU.
+   ========================================================================== */
+var _v3a = new THREE.Vector3(), _v3b = new THREE.Vector3();
+
+function updateGrassBounds() {
+  var p = state.plate, u = Grass.mat.uniforms;
+  u.uPlateHalf.value.set(p.width * 0.5, p.depth * 0.5);
+  u.uPlateSize.value.set(p.width, p.depth);
+  Terrain.mat.uniforms.uPlateSize.value.set(p.width, p.depth);
+}
+
+function syncGrassUniforms() {
+  var g = state.grass, w = state.wind, u = Grass.mat.uniforms;
+  u.uHeight.value = g.height;
+  u.uWidth.value = g.width;
+  u.uTaper.value = g.taper;
+  u.uCurve.value = g.curve;
+  u.uBladeCurl.value = g.bladeCurl;
+  u.uDensity.value = g.density;
+  u.uGradPow.value = g.gradPow;
+  u.uHueVar.value = g.hueVar;
+  u.uSatVar.value = g.satVar;
+  u.uValVar.value = g.valVar;
+  u.uAO.value = g.ao;
+  u.uTranslucency.value = g.translucency;
+  u.uSpecular.value = g.specular;
+  u.uRoughness.value = g.roughness;
+  hexLin(g.baseColor, u.uBaseColor.value);
+  hexLin(g.tipColor, u.uTipColor.value);
+
+  var a = w.direction * DEG;
+  u.uWindDir.value.set(Math.sin(a), Math.cos(a)).normalize();
+  u.uWindStrength.value = w.strength;
+  u.uWindSpeed.value = w.speed;
+  u.uTurbulence.value = w.turbulence;
+  u.uWaveScale.value = w.waveScale;
+  u.uGustScale.value = w.gustFreq;
+  u.uGustSpeed.value = w.gustSpeed;
+  u.uGustStrength.value = w.gustStrength;
+
+  u.uPushTex.value = Field.tex;
+  u.uPushEnc.value = Field.enc;
+  updateGrassBounds();
+}
+
+function syncGroundUniforms() {
+  var p = state.plate, u = Terrain.mat.uniforms;
+  hexLin(p.baseColor, u.uBaseColor.value);
+  hexLin(p.secColor, u.uSecColor.value);
+  u.uPattern.value = ({ solid: 0, checker: 1, radial: 2, noise: 3 })[p.pattern] || 0;
+  u.uCheckerScale.value = p.checkerScale;
+  u.uRoughness.value = p.roughness;
+  u.uGrid.value = p.grid ? 1 : 0;
+  u.uGridSpacing.value = p.gridSpacing;
+  u.uGridOpacity.value = p.gridOpacity;
+  u.uPlateSize.value.set(p.width, p.depth);
+
+  // slope + altitude auto-texturing
+  u.uAutoTex.value = (p.autoTex && p.mode === 'terrain') ? 1 : 0;
+  hexLin(p.grassColor, u.uGrassCol.value);
+  hexLin(p.dirtColor, u.uDirtCol.value);
+  hexLin(p.rockColor, u.uRockCol.value);
+  hexLin(p.snowColor, u.uSnowCol.value);
+  u.uRockSlope.value = p.rockSlope;
+  u.uRockBlend.value = Math.max(0.01, p.rockBlend);
+  u.uSnowOn.value = p.snowOn ? 1 : 0;
+  u.uSnowline.value = p.snowline;
+  u.uSnowBlend.value = Math.max(0.05, p.snowBlend);
+  syncWaterUniforms();
+}
+
+function syncEnvUniforms() {
+  updateEnv();
+  var e = state.env;
+  var gu = Grass.mat.uniforms, tu = Terrain.mat.uniforms,
+      su = sky.material.uniforms, bu = ball.material.uniforms;
+
+  var amb = Env.amb, gnd = Env.gnd;
+  var sunLit = Env.sun;
+
+  gu.uSunDir.value.copy(Env.sunDir);
+  gu.uSunColor.value.copy(sunLit);
+  gu.uSkyColor.value.copy(amb);
+  gu.uGroundColor.value.copy(gnd);
+  gu.uAmbient.value = Env.ambient;
+  gu.uExposure.value = e.exposure;
+  gu.uFogColor.value.copy(Env.fog);
+  gu.uFogDensity.value = e.fogDensity;
+
+  tu.uSunDir.value.copy(Env.sunDir);
+  tu.uSunColor.value.copy(sunLit);
+  tu.uSkyColor.value.copy(amb);
+  tu.uGroundColor.value.copy(gnd);
+  tu.uAmbient.value = Env.ambient;
+  tu.uExposure.value = e.exposure;
+  tu.uFogColor.value.copy(Env.fog);
+  tu.uFogDensity.value = e.fogDensity;
+  tu.uShadow.value = e.shadows ? 1 : 0;
+  tu.uShadowStrength.value = e.shadowStrength;
+  // Project grass height along the sun to find where its shadow lands.
+  var sy = Math.max(0.18, Env.sunDir.y);
+  var k = state.grass.height * 0.55 / sy;
+  tu.uShadowOffset.value.set(
+    Env.sunDir.x * k / state.plate.width,
+    Env.sunDir.z * k / state.plate.depth
+  );
+
+  su.uZenith.value.copy(Env.zenith);
+  su.uHorizon.value.copy(Env.horizon);
+  su.uSunColor.value.copy(sunLit);
+  su.uSunDir.value.copy(Env.sunDir);
+  su.uFogColor.value.copy(Env.fog);
+  su.uExposure.value = e.exposure;
+  sky.visible = e.sky;
+
+  bu.uSunDir.value.copy(Env.sunDir);
+  bu.uSunColor.value.copy(sunLit);
+  bu.uSkyColor.value.copy(amb);
+  bu.uGroundColor.value.copy(gnd);
+  bu.uAmbient.value = Env.ambient;
+  bu.uExposure.value = e.exposure;
+  bu.uFogColor.value.copy(Env.fog);
+  bu.uFogDensity.value = e.fogDensity;
+
+  syncWaterUniforms();
+  syncObjectEnv();
+
+  if (!e.sky) renderer.setClearColor(new THREE.Color(
+    Math.pow(clamp(Env.fog.x, 0, 1), 1 / 2.2),
+    Math.pow(clamp(Env.fog.y, 0, 1), 1 / 2.2),
+    Math.pow(clamp(Env.fog.z, 0, 1), 1 / 2.2)), 1);
+}
+
+/* ==========================================================================
+   BRUSH RING PREVIEW — a ribbon that hugs the ground surface.
+   ========================================================================== */
+function updateRing(cx, cz, radius, visible) {
+  ring.visible = visible;
+  if (!visible) return;
+  var RSEG = ring.userData.RSEG;
+  var pos = ring.geometry.attributes.position, pa = pos.array;
+  var inner = radius * clamp(1 - state.brush.falloff * 0.62, 0.06, 0.99);
+  var thick = Math.max(0.015, radius * 0.014);
+  var o = 0;
+  for (var r = 0; r < 2; r++) {
+    var rr = (r === 0) ? radius : inner;
+    for (var s = 0; s <= RSEG; s++) {
+      var a = s / RSEG * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      var r0 = rr - thick, r1 = rr + thick;
+      var x0 = cx + ca * r0, z0 = cz + sa * r0;
+      var x1 = cx + ca * r1, z1 = cz + sa * r1;
+      pa[o++] = x0; pa[o++] = heightAt(x0, z0) + 0.02; pa[o++] = z0;
+      pa[o++] = x1; pa[o++] = heightAt(x1, z1) + 0.02; pa[o++] = z1;
+    }
+  }
+  pos.needsUpdate = true;
+}

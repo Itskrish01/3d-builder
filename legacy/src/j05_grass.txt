@@ -1,0 +1,354 @@
+/* ==========================================================================
+   7. GRASS SYSTEM
+   ========================================================================== */
+
+var BLADE_ATTRS = [['aOffset', 3], ['aNormal', 3], ['aRot', 1], ['aSize', 2], ['aShape', 2], ['aSeed', 1]];
+var BLADE_STRIDE = 12;   // floats per blade across all attributes
+
+var Grass = {
+  geo: null, mat: null, mesh: null,
+  count: 0,
+  attr: {},          // name -> InstancedBufferAttribute
+  arr: {},           // name -> Float32Array
+  dirtyMin: Infinity, dirtyMax: -1
+};
+
+/* Blade template: a tapered strip in blade space.
+      position.x = side (-1 / +1, and 0 for the single tip vertex)
+      position.y = t    (0 at the root, 1 at the tip)
+   Rebuilt only when the segment-count slider moves. */
+function bladeTemplate(S) {
+  S = clamp(Math.round(S), 3, 7);
+  var vcount = 2 * S + 1;
+  var pos = new Float32Array(vcount * 3), o = 0;
+  for (var i = 0; i < S; i++) {
+    var t = i / S;
+    pos[o++] = -1; pos[o++] = t; pos[o++] = 0;
+    pos[o++] =  1; pos[o++] = t; pos[o++] = 0;
+  }
+  pos[o++] = 0; pos[o++] = 1; pos[o++] = 0;
+
+  var tris = 2 * (S - 1) + 1;
+  var idx = new Uint16Array(tris * 3), k = 0;
+  for (var j = 0; j < S - 1; j++) {
+    var a = 2 * j, b = a + 1, c = a + 2, d = a + 3;
+    idx[k++] = a; idx[k++] = c; idx[k++] = b;
+    idx[k++] = b; idx[k++] = c; idx[k++] = d;
+  }
+  idx[k++] = 2 * (S - 1); idx[k++] = 2 * S; idx[k++] = 2 * (S - 1) + 1;
+  return { pos: pos, idx: idx };
+}
+
+function grassUniforms() {
+  return {
+    uTime:        { value: 0 },
+    uWindDir:     { value: new THREE.Vector2(1, 0) },
+    uWindStrength:{ value: 0.5 }, uWindSpeed: { value: 0.34 },
+    uTurbulence:  { value: 0.6 }, uWaveScale: { value: 0.075 },
+    uGustScale:   { value: 0.17 }, uGustSpeed: { value: 1.5 }, uGustStrength: { value: 0.85 },
+    uHeight:      { value: 1 }, uWidth: { value: 0.06 }, uTaper: { value: 1 },
+    uCurve:       { value: 0.5 }, uBladeCurl: { value: 0.55 },
+    uDensity:     { value: 1 },
+    uPlateHalf:   { value: new THREE.Vector2(21, 21) },
+    uPlateSize:   { value: new THREE.Vector2(42, 42) },
+    uPushTex:     { value: null }, uPushEnc: { value: 3 },
+    uBaseColor:   { value: new THREE.Vector3() }, uTipColor: { value: new THREE.Vector3() },
+    uGradPow:     { value: 1.5 },
+    uHueVar:      { value: 0.05 }, uSatVar: { value: 0.2 }, uValVar: { value: 0.24 },
+    uSunDir:      { value: new THREE.Vector3(0, 1, 0) },
+    uSunColor:    { value: new THREE.Vector3(1, 1, 1) },
+    uSkyColor:    { value: new THREE.Vector3(0.3, 0.4, 0.6) },
+    uGroundColor: { value: new THREE.Vector3(0.1, 0.1, 0.1) },
+    uAmbient:     { value: 1 }, uAO: { value: 0.6 },
+    uTranslucency:{ value: 1 }, uSpecular: { value: 0.22 }, uRoughness: { value: 0.6 },
+    uExposure:    { value: 1.05 },
+    uFogColor:    { value: new THREE.Vector3(0.5, 0.6, 0.7) },
+    uFogDensity:  { value: 0.0075 }
+  };
+}
+
+function createGrass() {
+  var geo = new THREE.InstancedBufferGeometry();
+  var tpl = bladeTemplate(state.grass.segments);
+  geo.setAttribute('position', new THREE.BufferAttribute(tpl.pos, 3));
+  geo.setIndex(new THREE.BufferAttribute(tpl.idx, 1));
+
+  for (var i = 0; i < BLADE_ATTRS.length; i++) {
+    var name = BLADE_ATTRS[i][0], size = BLADE_ATTRS[i][1];
+    var arr = new Float32Array(MAX_BLADES * size);
+    var a = new THREE.InstancedBufferAttribute(arr, size);
+    a.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute(name, a);
+    Grass.attr[name] = a;
+    Grass.arr[name] = arr;
+  }
+  geo.instanceCount = 0;
+  // The template's bounding sphere is meaningless for instances; culling is
+  // handled by the plate-bounds test in the vertex shader instead.
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+  var mat = new THREE.ShaderMaterial({
+    vertexShader: GRASS_VS,
+    fragmentShader: GRASS_FS,
+    uniforms: grassUniforms(),
+    side: THREE.DoubleSide
+  });
+
+  Grass.geo = geo; Grass.mat = mat;
+  Grass.mesh = new THREE.Mesh(geo, mat);
+  Grass.mesh.frustumCulled = false;
+  scene.add(Grass.mesh);
+  /* Note: a depth prepass was tried here and measured ~4x SLOWER at 158k
+     blades. Grass is bound by vertex + rasterisation of ~1.4M sliver
+     triangles, not by fragment shading, so paying for a second geometry pass
+     to save overdraw is a straight loss. One pass it is. */
+}
+
+/* Segment count changed -> swap the template. The instance attributes are
+   reused verbatim, so no blade data is touched. */
+function rebuildBladeTemplate() {
+  var tpl = bladeTemplate(state.grass.segments);
+  var g = Grass.geo;
+  g.deleteAttribute('position');
+  g.setAttribute('position', new THREE.BufferAttribute(tpl.pos, 3));
+  g.setIndex(new THREE.BufferAttribute(tpl.idx, 1));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+}
+
+function markDirty(from, to) {
+  if (from < Grass.dirtyMin) Grass.dirtyMin = from;
+  if (to > Grass.dirtyMax) Grass.dirtyMax = to;
+}
+
+/* Upload only the instance range that actually changed this frame. */
+function flushGrass() {
+  Grass.geo.instanceCount = Grass.count;
+  if (Grass.dirtyMin > Grass.dirtyMax) return;
+  var lo = Math.max(0, Grass.dirtyMin), hi = Math.min(MAX_BLADES - 1, Grass.dirtyMax);
+  for (var i = 0; i < BLADE_ATTRS.length; i++) {
+    var name = BLADE_ATTRS[i][0], size = BLADE_ATTRS[i][1], a = Grass.attr[name];
+    a.updateRange.offset = lo * size;
+    a.updateRange.count = (hi - lo + 1) * size;
+    a.needsUpdate = true;
+  }
+  Grass.dirtyMin = Infinity; Grass.dirtyMax = -1;
+}
+
+/* ---- blade read / write -------------------------------------------------- */
+function writeBlade(i, x, y, z, nx, ny, nz, rot, hm, wm, bend, stiff, seed) {
+  var A = Grass.arr;
+  var o3 = i * 3, o2 = i * 2;
+  A.aOffset[o3] = x; A.aOffset[o3 + 1] = y; A.aOffset[o3 + 2] = z;
+  A.aNormal[o3] = nx; A.aNormal[o3 + 1] = ny; A.aNormal[o3 + 2] = nz;
+  A.aRot[i] = rot;
+  A.aSize[o2] = hm; A.aSize[o2 + 1] = wm;
+  A.aShape[o2] = bend; A.aShape[o2 + 1] = stiff;
+  A.aSeed[i] = seed;
+  markDirty(i, i);
+}
+function readBlade(i, out) {
+  var A = Grass.arr, o3 = i * 3, o2 = i * 2;
+  out = out || new Float32Array(BLADE_STRIDE);
+  out[0] = A.aOffset[o3]; out[1] = A.aOffset[o3 + 1]; out[2] = A.aOffset[o3 + 2];
+  out[3] = A.aNormal[o3]; out[4] = A.aNormal[o3 + 1]; out[5] = A.aNormal[o3 + 2];
+  out[6] = A.aRot[i];
+  out[7] = A.aSize[o2]; out[8] = A.aSize[o2 + 1];
+  out[9] = A.aShape[o2]; out[10] = A.aShape[o2 + 1];
+  out[11] = A.aSeed[i];
+  return out;
+}
+function writeBladeArr(i, d, off) {
+  off = off || 0;
+  writeBlade(i, d[off], d[off + 1], d[off + 2], d[off + 3], d[off + 4], d[off + 5],
+             d[off + 6], d[off + 7], d[off + 8], d[off + 9], d[off + 10], d[off + 11]);
+}
+function copyBlade(src, dst) {
+  var A = Grass.arr;
+  for (var i = 0; i < BLADE_ATTRS.length; i++) {
+    var n = BLADE_ATTRS[i][0], s = BLADE_ATTRS[i][1], a = A[n];
+    for (var k = 0; k < s; k++) a[dst * s + k] = a[src * s + k];
+  }
+  markDirty(dst, dst);
+}
+
+/* ---- re-snapping to the surface ----------------------------------------- */
+var _snapN = new THREE.Vector3();
+function resnapAll() {
+  var A = Grass.arr, n = Grass.count;
+  if (!n) return;
+  for (var i = 0; i < n; i++) {
+    var o = i * 3, x = A.aOffset[o], z = A.aOffset[o + 2];
+    A.aOffset[o + 1] = heightAt(x, z);
+    normalAt(x, z, _snapN);
+    A.aNormal[o] = _snapN.x; A.aNormal[o + 1] = _snapN.y; A.aNormal[o + 2] = _snapN.z;
+  }
+  markDirty(0, n - 1);
+}
+function resnapRegion(cx, cz, r) {
+  var A = Grass.arr, n = Grass.count, r2 = r * r, lo = -1, hi = -1;
+  for (var i = 0; i < n; i++) {
+    var o = i * 3, dx = A.aOffset[o] - cx, dz = A.aOffset[o + 2] - cz;
+    if (dx * dx + dz * dz > r2) continue;
+    var x = A.aOffset[o], z = A.aOffset[o + 2];
+    A.aOffset[o + 1] = heightAt(x, z);
+    normalAt(x, z, _snapN);
+    A.aNormal[o] = _snapN.x; A.aNormal[o + 1] = _snapN.y; A.aNormal[o + 2] = _snapN.z;
+    if (lo < 0) lo = i; hi = i;
+  }
+  if (lo >= 0) markDirty(lo, hi);
+}
+
+/* ==========================================================================
+   DENSITY GRID — doubles as the paint saturation limiter and as the source
+   texture for contact shadows.
+   ========================================================================== */
+var Dens = {
+  n: DENS_N,
+  grid: new Int32Array(DENS_N * DENS_N),
+  data: new Uint8Array(DENS_N * DENS_N * 4),
+  tex: null,
+  dirty: true
+};
+
+function densCell(x, z) {
+  var p = state.plate;
+  var i = ((x / p.width + 0.5) * Dens.n) | 0;
+  var j = ((z / p.depth + 0.5) * Dens.n) | 0;
+  if (i < 0 || j < 0 || i >= Dens.n || j >= Dens.n) return -1;
+  return j * Dens.n + i;
+}
+function densCellArea() {
+  return (state.plate.width / Dens.n) * (state.plate.depth / Dens.n);
+}
+function densBump(x, z, d) {
+  var c = densCell(x, z);
+  if (c >= 0) { Dens.grid[c] += d; if (Dens.grid[c] < 0) Dens.grid[c] = 0; Dens.dirty = true; }
+}
+function rebuildDensityGrid() {
+  Dens.grid.fill(0);
+  var A = Grass.arr;
+  for (var i = 0; i < Grass.count; i++) {
+    var c = densCell(A.aOffset[i * 3], A.aOffset[i * 3 + 2]);
+    if (c >= 0) Dens.grid[c]++;
+  }
+  Dens.dirty = true;
+}
+function uploadDensity() {
+  if (!Dens.dirty || !Dens.tex) return;
+  var target = Math.max(1, state.brush.maxDensity * densCellArea());
+  var g = Dens.grid, d = Dens.data;
+  for (var i = 0, n = g.length; i < n; i++) {
+    var v = g[i] / target;
+    d[i * 4] = v >= 1 ? 255 : (v * 255) | 0;
+  }
+  Dens.tex.needsUpdate = true;
+  Dens.dirty = false;
+}
+
+/* ==========================================================================
+   SCENE OBJECTS
+   ========================================================================== */
+function createScene() {
+  /* --- sky (full-screen quad) --- */
+  var skyMat = new THREE.ShaderMaterial({
+    vertexShader: SKY_VS, fragmentShader: SKY_FS,
+    uniforms: {
+      uInvVP: { value: new THREE.Matrix4() },
+      uZenith: { value: new THREE.Vector3() }, uHorizon: { value: new THREE.Vector3() },
+      uSunColor: { value: new THREE.Vector3() }, uSunDir: { value: new THREE.Vector3() },
+      uFogColor: { value: new THREE.Vector3() }, uExposure: { value: 1 }, uSunSize: { value: 1 }
+    },
+    depthTest: false, depthWrite: false
+  });
+  sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), skyMat);
+  sky.frustumCulled = false;
+  sky.renderOrder = -1000;
+  scene.add(sky);
+
+  /* --- density texture --- */
+  Dens.tex = new THREE.DataTexture(Dens.data, Dens.n, Dens.n, THREE.RGBAFormat, THREE.UnsignedByteType);
+  Dens.tex.minFilter = THREE.LinearFilter;
+  Dens.tex.magFilter = THREE.LinearFilter;
+  Dens.tex.wrapS = Dens.tex.wrapT = THREE.ClampToEdgeWrapping;
+  Dens.tex.needsUpdate = true;
+
+  /* --- ground --- */
+  Terrain.mat = new THREE.ShaderMaterial({
+    vertexShader: GROUND_VS, fragmentShader: GROUND_FS,
+    uniforms: {
+      uBaseColor: { value: new THREE.Vector3() }, uSecColor: { value: new THREE.Vector3() },
+      uPattern: { value: 1 }, uCheckerScale: { value: 2.5 }, uRoughness: { value: 0.85 },
+      uPlateSize: { value: new THREE.Vector2(42, 42) },
+      uGrid: { value: 1 }, uGridSpacing: { value: 2 }, uGridOpacity: { value: 0.22 },
+      uSunDir: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Vector3() },
+      uSkyColor: { value: new THREE.Vector3() }, uGroundColor: { value: new THREE.Vector3() },
+      uAmbient: { value: 1 }, uExposure: { value: 1.05 },
+      uDensTex: { value: Dens.tex },
+      uShadow: { value: 1 }, uShadowStrength: { value: 0.55 },
+      uShadowOffset: { value: new THREE.Vector2() },
+      uAutoTex: { value: 1 },
+      uGrassCol: { value: new THREE.Vector3() }, uDirtCol: { value: new THREE.Vector3() },
+      uRockCol: { value: new THREE.Vector3() }, uSnowCol: { value: new THREE.Vector3() },
+      uRockSlope: { value: 0.74 }, uRockBlend: { value: 0.14 },
+      uSnowOn: { value: 0 }, uSnowline: { value: 7 }, uSnowBlend: { value: 2.4 },
+      uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0.0075 }
+    },
+    extensions: { derivatives: true },
+    side: THREE.FrontSide
+  });
+  Terrain.N = 1;
+  Terrain.h = new Float32Array(4); Terrain.base = new Float32Array(4); Terrain.sculpt = new Float32Array(4);
+  computeTerrainHeights();
+  buildGroundGeometry();
+  Terrain.mesh = new THREE.Mesh(Terrain.geo, Terrain.mat);
+  Terrain.mesh.frustumCulled = false;
+  scene.add(Terrain.mesh);
+
+  /* --- interactive ball --- */
+  var ballMat = new THREE.ShaderMaterial({
+    vertexShader: BALL_VS, fragmentShader: BALL_FS,
+    uniforms: {
+      uSunDir: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Vector3() },
+      uSkyColor: { value: new THREE.Vector3() }, uGroundColor: { value: new THREE.Vector3() },
+      uColor: { value: new THREE.Vector3(0.62, 0.16, 0.14) },
+      uAmbient: { value: 1 }, uExposure: { value: 1.05 },
+      uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0.0075 }
+    }
+  });
+  ball = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 26), ballMat);
+  ball.visible = false;
+  ball.position.set(0, 1.3, 0);
+  scene.add(ball);
+
+  /* --- brush ring --- */
+  var RSEG = 128;
+  var rgeo = new THREE.BufferGeometry();
+  var rv = (RSEG + 1) * 2 * 2;                    // two rings, ribbon of 2 verts each
+  rgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(rv * 3), 3));
+  var alpha = new Float32Array(rv);
+  for (var s = 0; s <= RSEG; s++) {
+    alpha[s * 2] = 1; alpha[s * 2 + 1] = 1;
+    alpha[(RSEG + 1) * 2 + s * 2] = 0.42; alpha[(RSEG + 1) * 2 + s * 2 + 1] = 0.42;
+  }
+  rgeo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+  var ridx = [], base;
+  for (var ringI = 0; ringI < 2; ringI++) {
+    base = ringI * (RSEG + 1) * 2;
+    for (var s2 = 0; s2 < RSEG; s2++) {
+      var a0 = base + s2 * 2, b0 = a0 + 1, c0 = a0 + 2, d0 = a0 + 3;
+      ridx.push(a0, c0, b0, b0, c0, d0);
+    }
+  }
+  rgeo.setIndex(ridx);
+  rgeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+  ring = new THREE.Mesh(rgeo, new THREE.ShaderMaterial({
+    vertexShader: RING_VS, fragmentShader: RING_FS,
+    uniforms: { uColor: { value: new THREE.Vector3(0.49, 0.85, 0.34) }, uOpacity: { value: 1 } },
+    transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide
+  }));
+  ring.frustumCulled = false;
+  ring.renderOrder = 999;
+  ring.visible = false;
+  ring.userData.RSEG = RSEG;
+  scene.add(ring);
+}

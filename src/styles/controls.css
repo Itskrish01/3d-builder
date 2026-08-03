@@ -1,0 +1,274 @@
+/* ============================================================================
+   CONTROLS — one vocabulary. Bigger targets than a pro tool would use,
+   because the audience has never opened one.
+   ========================================================================== */
+.group { margin-bottom: var(--s5); }
+.group:last-child { margin-bottom: 0; }
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs0);
+  font-weight: 600;
+  font-variation-settings: "wdth" 118;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--straw-2);
+  margin-bottom: var(--s3);
+}
+.group-title::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--rule); }
+
+.ctrl { margin-bottom: var(--s3); }
+.ctrl:last-child { margin-bottom: 0; }
+.ctrl-top { display: flex; align-items: baseline; gap: var(--s2); margin-bottom: 7px; }
+.ctrl-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs1);
+  color: var(--straw);
+  font-weight: 500;
+
+  /* Labels wrap rather than truncate: a clipped label is a puzzle, and these
+     are written as short sentences for people who have not met the term. */
+  overflow-wrap: anywhere;
+}
+.ctrl-val {
+  flex: 0 0 auto;
+  width: 74px;
+  height: 22px;
+  text-align: right;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r1);
+  font-family: var(--fm);
+  font-size: var(--fs0);
+  font-variant-numeric: tabular-nums;
+  color: var(--chalk);
+  padding: 0 5px;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.ctrl-val:hover { background: var(--husk); border-color: var(--rule-2); }
+.ctrl-val:focus { background: var(--husk); border-color: var(--sun); }
+
+/* ---------- slider ---------- */
+.slider { position: relative; height: 20px; display: flex; align-items: center; cursor: ew-resize; touch-action: none; }
+.slider .trk { position: absolute; left: 0; right: 0; height: 6px; border-radius: 99px; background: var(--husk); }
+.slider .fill { position: absolute; left: 0; height: 6px; border-radius: 99px; background: var(--sun-deep); transition: background var(--dur) var(--ease); }
+.slider .knob {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 99px;
+  background: var(--chalk);
+  border: 3px solid var(--loam);
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 0 var(--sun-wash);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.slider:hover .knob,
+.slider.act .knob { background: var(--sun); box-shadow: 0 0 0 5px var(--sun-wash); }
+.slider:hover .fill,
+.slider.act .fill { background: var(--sun); }
+.slider.act .knob { transform: translateX(-50%) scale(1.12); }
+.slider.fine .trk { background: var(--sun-deep); opacity: 0.45; }
+
+/* ---------- segmented ---------- */
+.seg { display: flex; gap: 3px; background: var(--husk); border-radius: var(--r2); padding: 3px; }
+.seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  border-radius: 6px;
+  font-size: var(--fs1);
+  font-weight: 600;
+  color: var(--straw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.seg button:hover { background: var(--husk-2); color: var(--chalk); }
+.seg button[aria-pressed="true"] { background: var(--sun); color: var(--soil); }
+
+/* ---------- chips: named choices, where the name is worth reading ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 99px;
+  background: var(--husk);
+  border: 1px solid transparent;
+  color: var(--straw);
+  font-size: var(--fs1);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.chip:hover { background: var(--husk-2); color: var(--chalk); }
+.chip[aria-pressed="true"] { background: var(--sun-wash); border-color: var(--sun); color: var(--sun); }
+.chip i { width: 11px; height: 11px; border-radius: 99px; flex: 0 0 auto; border: 1px solid rgb(255 255 255 / 16%); }
+
+/* ---------- buttons ---------- */
+.btn {
+  flex: 0 0 auto;
+  height: var(--ctrlh);
+  padding: 0 14px;
+  border-radius: var(--r2);
+  background: var(--husk);
+  color: var(--chalk);
+  font-size: var(--fs2);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.btn:hover { background: var(--husk-2); }
+.btn:active { transform: translateY(1px); }
+.btn.icon { width: var(--ctrlh); padding: 0; }
+.btn.ghost { background: transparent; color: var(--straw); }
+.btn.ghost:hover { background: var(--husk); color: var(--chalk); }
+.btn.pri { background: var(--sun); color: var(--soil); font-weight: 600; }
+.btn.pri:hover { background: #ffc661; }
+.btn.dgr { color: var(--clay); }
+.btn.dgr:hover { background: rgb(236 116 88 / 16%); color: var(--clay); }
+.btn:disabled { opacity: 0.35; pointer-events: none; }
+.btn-row { display: flex; gap: var(--s2); margin-top: var(--s3); }
+.btn-row .btn { flex: 1 1 0; min-width: 0; }
+
+/* ---------- select ---------- */
+.sel { position: relative; height: var(--ctrlh); }
+.sel select {
+  width: 100%;
+  height: 100%;
+  appearance: none;
+  background: var(--husk);
+  border: 0;
+  border-radius: var(--r2);
+  padding: 0 30px 0 11px;
+  font-size: var(--fs2);
+  cursor: pointer;
+  color: var(--chalk);
+  transition: background var(--dur) var(--ease);
+}
+.sel select:hover { background: var(--husk-2); }
+.sel select option { background: var(--well); color: var(--chalk); }
+.sel svg { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--straw-2); pointer-events: none; }
+
+/* ---------- toggle ---------- */
+.tgl { width: 40px; height: 23px; border-radius: 99px; background: var(--husk); position: relative; flex: 0 0 auto; transition: background var(--dur) var(--ease); }
+.tgl::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 99px;
+  background: var(--straw-2);
+  transition: transform var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.tgl[aria-pressed="true"] { background: var(--sun-deep); }
+.tgl[aria-pressed="true"]::after { transform: translateX(17px); background: var(--sun); }
+.ctrl.row { display: flex; align-items: center; gap: var(--s3); min-height: 26px; }
+.ctrl.row .ctrl-label { margin: 0; }
+
+/* ---------- colour ---------- */
+.col { display: flex; align-items: center; gap: var(--s2); }
+.col .sw {
+  width: 32px;
+  height: var(--ctrlh);
+  border-radius: var(--r2);
+  overflow: hidden;
+  position: relative;
+  flex: 0 0 auto;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%);
+}
+.col .sw input { position: absolute; inset: -8px; width: calc(100% + 16px); height: calc(100% + 16px); border: 0; padding: 0; cursor: pointer; background: none; }
+.col .hex {
+  flex: 1 1 auto;
+  height: var(--ctrlh);
+  background: var(--husk);
+  border: 1px solid transparent;
+  border-radius: var(--r2);
+  padding: 0 10px;
+  font-family: var(--fm);
+  font-size: var(--fs0);
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.col .hex:hover { background: var(--husk-2); }
+.col .hex:focus { border-color: var(--sun); }
+
+/* ---------- wind dial ---------- */
+.dial { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s3); }
+.dial svg { width: 70px; height: 70px; flex: 0 0 auto; cursor: grab; touch-action: none; }
+.dial svg:active { cursor: grabbing; }
+.dial .dial-rim { fill: var(--husk); }
+.dial .dial-tick { stroke: var(--rule-2); stroke-width: 1.4; }
+.dial .dial-arrow { fill: var(--sun); }
+.dial .dial-hub { fill: var(--loam); }
+.dial-info { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- tool row: the two-to-four verbs inside a station ---------- */
+.tools { display: grid; gap: 6px; margin-bottom: var(--s4); }
+.tbtn {
+  height: 58px;
+  border-radius: var(--r2);
+  background: var(--husk);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--straw);
+  padding: 0 2px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.tbtn svg { width: 19px; height: 19px; }
+.tbtn span {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-variation-settings: "wdth" 112;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.tbtn:hover { background: var(--husk-2); color: var(--chalk); }
+.tbtn[aria-pressed="true"] { background: var(--sun); color: var(--soil); }
+
+/* ---------- notes and meters ---------- */
+.note { font-size: var(--fs1); color: var(--straw-2); line-height: 1.55; margin-bottom: var(--s3); }
+.note:last-child { margin-bottom: 0; }
+.note b { color: var(--straw); font-weight: 600; }
+.meter { height: 5px; border-radius: 99px; background: var(--husk); overflow: hidden; margin-top: 8px; }
+.meter i { display: block; height: 100%; background: var(--moss); border-radius: 99px; transition: width var(--slow) var(--ease), background var(--dur) var(--ease); }
+.meter.warn i { background: var(--clay); }
+
+/* ---------- numeric transform rows ---------- */
+.xform { display: grid; grid-template-columns: 16px 1fr 1fr 1fr; gap: 6px; align-items: center; margin-bottom: 6px; }
+.xform i { font-style: normal; font-size: var(--fs0); color: var(--straw-2); font-weight: 700; }
+.xform input {
+  height: 28px;
+  background: var(--husk);
+  border: 1px solid transparent;
+  border-radius: var(--r1);
+  padding: 0 7px;
+  font-family: var(--fm);
+  font-size: var(--fs0);
+  text-align: right;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.xform input:hover { background: var(--husk-2); }
+.xform input:focus { border-color: var(--sun); }

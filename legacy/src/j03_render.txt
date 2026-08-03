@@ -1,0 +1,249 @@
+/* ==========================================================================
+   4. RENDERER + CAMERA
+   ========================================================================== */
+
+var canvas, renderer, scene, camera, cam;   // `cam` = the orbit controller
+var viewW = 1, viewH = 1, basePR = 1;
+
+function initRenderer() {
+  canvas = document.getElementById('view');
+  renderer = new THREE.WebGLRenderer({
+    canvas: canvas, antialias: true, alpha: false,
+    powerPreference: 'high-performance', stencil: false
+  });
+  // All tone mapping / gamma is done explicitly inside the shaders (gp_out),
+  // so the renderer stays in raw linear pass-through mode.
+  if (THREE.ColorManagement) THREE.ColorManagement.enabled = false;
+  renderer.outputEncoding = THREE.LinearEncoding;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.autoClear = true;
+  renderer.setClearColor(0x000000, 1);
+
+  basePR = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(basePR);
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(52, 1, 0.1, 6000);
+  cam = new OrbitCam(camera);
+
+  canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    toast('WebGL context lost — reload the page to continue', 'err', 8000);
+  });
+
+  resize();
+  window.addEventListener('resize', resize);
+}
+
+function resize() {
+  var st = document.getElementById('stage');
+  viewW = Math.max(1, st.clientWidth);
+  viewH = Math.max(1, st.clientHeight);
+  renderer.setSize(viewW, viewH, false);
+  camera.aspect = viewW / viewH;
+  camera.updateProjectionMatrix();
+}
+
+/* --------------------------------------------------------------------------
+   Orbit camera. Written from scratch (rather than pulling in OrbitControls)
+   so the tool can remap mouse buttons per active tool and so damping is
+   frame-rate independent instead of a fixed per-frame lerp.
+   -------------------------------------------------------------------------- */
+function OrbitCam(camera) {
+  this.cam = camera;
+  this.target = new THREE.Vector3(0, 0.5, 0);
+  this.tTarget = this.target.clone();
+  this.sph = { r: 30, th: Math.PI * 0.28, ph: Math.PI * 0.34 };
+  this.tSph = { r: 30, th: Math.PI * 0.28, ph: Math.PI * 0.34 };
+  this.minR = 1.5; this.maxR = 500;
+  // A fly camera has to be able to look up, so the pitch range covers most
+  // of the sphere rather than stopping at the horizon like a pure orbit rig.
+  this.minPh = 0.06; this.maxPh = Math.PI - 0.06;
+  this.resp = 15;
+  this._r = new THREE.Vector3(); this._u = new THREE.Vector3();
+  this._fwd = new THREE.Vector3(); this._rgt = new THREE.Vector3();
+  this._off = new THREE.Vector3(); this._pos = new THREE.Vector3();
+}
+
+/* Offset from focus point to camera for a given spherical setting. */
+OrbitCam.prototype.offsetVec = function (s, out) {
+  var sp = Math.sin(s.ph), cp = Math.cos(s.ph);
+  return out.set(s.r * sp * Math.sin(s.th), s.r * cp, s.r * sp * Math.cos(s.th));
+};
+/* Where the camera is heading, i.e. the un-damped position. */
+OrbitCam.prototype.goalPos = function (out) {
+  this.offsetVec(this.tSph, this._off);
+  return out.copy(this.tTarget).add(this._off);
+};
+/* Unit view direction (camera -> focus point). */
+OrbitCam.prototype.forward = function (out) {
+  this.offsetVec(this.tSph, this._off);
+  return out.copy(this._off).multiplyScalar(-1).normalize();
+};
+OrbitCam.prototype.orbit = function (dx, dy) {
+  this.tSph.th -= dx * 0.0052;
+  this.tSph.ph = clamp(this.tSph.ph - dy * 0.0052, this.minPh, this.maxPh);
+};
+/* Roblox-style free look: the camera stays put and the focus point swings
+   around it, instead of the camera swinging around the focus point. */
+OrbitCam.prototype.look = function (dx, dy) {
+  var sens = 0.0052 * (state.cam ? state.cam.lookSens : 1);
+  this.goalPos(this._pos);
+  this.tSph.th -= dx * sens;
+  this.tSph.ph = clamp(this.tSph.ph - dy * sens * ((state.cam && state.cam.invertY) ? -1 : 1),
+                       this.minPh, this.maxPh);
+  this.offsetVec(this.tSph, this._off);
+  this.tTarget.copy(this._pos).sub(this._off);
+};
+
+/* Slide the whole rig along its view direction. */
+OrbitCam.prototype.moveAlongView = function (d) {
+  this.forward(this._fwd);
+  this.tTarget.addScaledVector(this._fwd, d);
+};
+
+/* WASD / QE. W follows the full look direction — pitch down and W descends,
+   which is what makes flying feel direct rather than tank-like. */
+OrbitCam.prototype.flyStep = function (dt) {
+  var m = Keys.move;
+  var f = (m.f ? 1 : 0) - (m.b ? 1 : 0);
+  var r = (m.r ? 1 : 0) - (m.l ? 1 : 0);
+  var u = (m.u ? 1 : 0) - (m.d ? 1 : 0);
+  if (!f && !r && !u) return false;
+  var c = state.cam;
+  var speed = c.flySpeed * (Keys.shift ? c.boost : 1) * dt;
+  this.forward(this._fwd);
+  // right = forward x worldUp
+  this._rgt.set(-this._fwd.z, 0, this._fwd.x);
+  if (this._rgt.lengthSq() < 1e-6) this._rgt.set(1, 0, 0);
+  this._rgt.normalize();
+  if (f) this.tTarget.addScaledVector(this._fwd, f * speed);
+  if (r) this.tTarget.addScaledVector(this._rgt, r * speed);
+  if (u) this.tTarget.y += u * speed;
+  return true;
+};
+
+/* Frame a point at a sensible distance — used by F on a selection. */
+OrbitCam.prototype.focusOn = function (x, y, z, radius) {
+  var want = clamp((radius || 1) * 3.2, 3, this.maxR);
+  this.tTarget.set(x, y, z);
+  this.tSph.r = want;
+};
+
+OrbitCam.prototype.pan = function (dx, dy) {
+  var h = 2 * this.sph.r * Math.tan(this.cam.fov * 0.5 * DEG) / Math.max(viewH, 1);
+  var m = this.cam.matrix;
+  this._r.set(m.elements[0], m.elements[1], m.elements[2]);
+  this._u.set(m.elements[4], m.elements[5], m.elements[6]);
+  this.tTarget.addScaledVector(this._r, -dx * h).addScaledVector(this._u, dy * h);
+};
+/* Scroll zooms toward the focus point, and once it gets there keeps pushing
+   the whole rig forward — so you can scroll straight through a scene instead
+   of stalling at a pivot. */
+OrbitCam.prototype.dolly = function (f) {
+  var nr = this.tSph.r * f;
+  if (nr < this.minR) { this.moveAlongView(this.minR - nr); nr = this.minR; }
+  else if (nr > this.maxR) { this.moveAlongView(-(nr - this.maxR)); nr = this.maxR; }
+  this.tSph.r = nr;
+};
+OrbitCam.prototype.frame = function (w, d, h) {
+  var rad = Math.max(w, d) * 0.72 + (h || 0);
+  // Fit against whichever axis is tighter: on a portrait viewport the
+  // horizontal field of view is the limit, not the vertical one.
+  var tv = Math.tan(this.cam.fov * 0.5 * DEG);
+  var th = tv * Math.max(this.cam.aspect, 0.01);
+  this.tSph.r = clamp(rad / Math.min(tv, th) * 0.62, this.minR, this.maxR);
+  this.tTarget.set(0, (h || 0) * 0.3, 0);
+};
+OrbitCam.prototype.snap = function () {
+  this.sph.r = this.tSph.r; this.sph.th = this.tSph.th; this.sph.ph = this.tSph.ph;
+  this.target.copy(this.tTarget); this.apply();
+};
+OrbitCam.prototype.update = function (dt) {
+  var a = 1 - Math.exp(-dt * this.resp);
+  this.sph.r  += (this.tSph.r  - this.sph.r)  * a;
+  this.sph.th += (this.tSph.th - this.sph.th) * a;
+  this.sph.ph += (this.tSph.ph - this.sph.ph) * a;
+  this.target.lerp(this.tTarget, a);
+  this.apply();
+};
+OrbitCam.prototype.apply = function () {
+  var s = this.sph, sp = Math.sin(s.ph), cp = Math.cos(s.ph);
+  this.cam.position.set(
+    this.target.x + s.r * sp * Math.sin(s.th),
+    this.target.y + s.r * cp,
+    this.target.z + s.r * sp * Math.cos(s.th)
+  );
+  this.cam.lookAt(this.target);
+  this.cam.updateMatrixWorld();
+};
+
+/* ==========================================================================
+   5. ENVIRONMENT — time of day drives sun, sky, ambient and fog together.
+   ========================================================================== */
+
+/* Keyframes indexed by the sun's height above the horizon. Values are LINEAR
+   light, not sRGB, so they can exceed 1 for the sun. */
+var SUN_KEYS = [
+  { y: -0.40, sun: [0.010, 0.014, 0.032], zen: [0.008, 0.012, 0.030], hor: [0.028, 0.036, 0.062], amb: [0.030, 0.044, 0.090], gnd: [0.012, 0.014, 0.022] },
+  { y: -0.09, sun: [0.120, 0.070, 0.062], zen: [0.020, 0.034, 0.082], hor: [0.150, 0.100, 0.110], amb: [0.070, 0.088, 0.150], gnd: [0.024, 0.026, 0.036] },
+  { y:  0.02, sun: [1.150, 0.430, 0.180], zen: [0.055, 0.098, 0.215], hor: [0.680, 0.330, 0.230], amb: [0.150, 0.160, 0.230], gnd: [0.055, 0.048, 0.048] },
+  { y:  0.14, sun: [1.420, 0.760, 0.400], zen: [0.115, 0.215, 0.470], hor: [0.860, 0.610, 0.470], amb: [0.240, 0.260, 0.340], gnd: [0.085, 0.080, 0.070] },
+  { y:  0.40, sun: [1.400, 1.130, 0.860], zen: [0.140, 0.300, 0.720], hor: [0.560, 0.680, 0.860], amb: [0.330, 0.390, 0.500], gnd: [0.110, 0.110, 0.098] },
+  { y:  0.85, sun: [1.380, 1.330, 1.220], zen: [0.120, 0.310, 0.860], hor: [0.640, 0.780, 0.960], amb: [0.380, 0.440, 0.560], gnd: [0.125, 0.125, 0.115] }
+];
+
+var Env = {
+  sunDir: new THREE.Vector3(0, 1, 0),
+  sun:    new THREE.Vector3(),
+  zenith: new THREE.Vector3(),
+  horizon:new THREE.Vector3(),
+  amb:    new THREE.Vector3(),
+  gnd:    new THREE.Vector3(),
+  fog:    new THREE.Vector3(),
+  ambient: 1
+};
+
+function updateEnv() {
+  var e = state.env;
+  var h = e.timeOfDay;
+
+  // Sun path: elevation follows a sine keyed to 06:00 rise / 18:00 set, and
+  // the azimuth sweeps through the day so shadows rotate rather than flip.
+  var a  = (h - 6) / 12 * Math.PI;
+  var el = Math.sin(a) * (Math.PI * 0.5) * 0.94;
+  var az = Math.PI * 0.28 + (h / 24) * Math.PI * 1.35;
+  Env.sunDir.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)).normalize();
+
+  // Blend the keyframe table by sun height.
+  var y = Env.sunDir.y, i = 0;
+  while (i < SUN_KEYS.length - 2 && y > SUN_KEYS[i + 1].y) i++;
+  var k0 = SUN_KEYS[i], k1 = SUN_KEYS[i + 1];
+  var t = clamp((y - k0.y) / (k1.y - k0.y), 0, 1);
+  t = t * t * (3 - 2 * t);
+
+  var sun = mixArr(k0.sun, k1.sun, t);
+  var zen = mixArr(k0.zen, k1.zen, t);
+  var hor = mixArr(k0.hor, k1.hor, t);
+  var amb = mixArr(k0.amb, k1.amb, t);
+  var gnd = mixArr(k0.gnd, k1.gnd, t);
+
+  Env.sun.fromArray(sun);
+  Env.zenith.fromArray(zen);
+  Env.horizon.fromArray(hor);
+  Env.amb.fromArray(amb);
+  Env.gnd.fromArray(gnd);
+  Env.ambient = 1;
+
+  if (e.fogAuto) {
+    Env.fog.set(lerp(hor[0], zen[0], 0.3), lerp(hor[1], zen[1], 0.3), lerp(hor[2], zen[2], 0.3));
+  } else {
+    hexLin(e.fogColor, Env.fog);
+  }
+}
+
+/* Human-readable clock for the time-of-day slider. */
+function clockLabel(h) {
+  var hh = Math.floor(h) % 24, mm = Math.floor((h - Math.floor(h)) * 60);
+  return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+}

@@ -1,0 +1,318 @@
+/* ==========================================================================
+   THE STATION RAIL — the signature
+   --------------------------------------------------------------------------
+   Four stations, stacked with no gaps and separated by hairlines. Every glyph
+   is drawn in the same 44×26 frame with the same ground line at y=21, so the
+   rail reads as four strata of one continuous ground: whatever station you
+   are at, you are working on the same piece of earth.
+   ========================================================================== */
+#rail{
+  position:absolute; left:0; top:0; bottom:0; width:var(--rail);
+  background:var(--loam); border-right:1px solid var(--rule);
+  display:flex; flex-direction:column; z-index:20;
+}
+.station{
+  width:100%;height:86px;flex:0 0 auto;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+  color:var(--straw);position:relative;
+  border-bottom:1px solid var(--rule);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.station svg{width:44px;height:26px;overflow:visible}
+.station .ground{stroke-width:2.4}
+.station .form{stroke-width:2}
+.station span{
+  font-size:10px;font-weight:700;font-variation-settings:"wdth" 118;
+  letter-spacing:.13em;text-transform:uppercase;line-height:1;
+}
+.station:hover{background:var(--husk);color:var(--chalk)}
+.station[aria-pressed="true"]{background:var(--sun-wash);color:var(--sun)}
+.station[aria-pressed="true"]::before{
+  content:"";position:absolute;left:0;top:0;bottom:-1px;width:4px;background:var(--sun);
+}
+.station[aria-pressed="true"] .ground{stroke-width:3.4}
+
+/* The one orchestrated moment: on the first paint of the session each stratum
+   draws itself in, top to bottom. Scoped to .intro so that switching station
+   — which rebuilds the rail — does not replay it every time. */
+#rail.intro .ground{
+  stroke-dasharray:40;stroke-dashoffset:40;
+  animation:strata 520ms var(--ease) forwards;
+}
+#rail.intro .station:nth-child(1) .ground{animation-delay:60ms}
+#rail.intro .station:nth-child(2) .ground{animation-delay:160ms}
+#rail.intro .station:nth-child(3) .ground{animation-delay:260ms}
+#rail.intro .station:nth-child(4) .ground{animation-delay:360ms}
+@keyframes strata{to{stroke-dashoffset:0}}
+
+#rail-foot{margin-top:auto;padding:var(--s3);display:flex;justify-content:center}
+#rail-foot .btn{width:100%}
+
+/* ==========================================================================
+   TOOL ROW — the two-to-four verbs inside a station
+   ========================================================================== */
+.tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:6px;margin-bottom:var(--s4)}
+.tbtn{
+  height:58px;border-radius:var(--r2);background:var(--husk);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  color:var(--straw);padding:0 2px;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.tbtn svg{width:19px;height:19px}
+.tbtn span{font-size:10px;letter-spacing:.05em;font-weight:600;text-transform:uppercase;
+  font-variation-settings:"wdth" 112;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tbtn:hover{background:var(--husk-2);color:var(--chalk)}
+.tbtn[aria-pressed="true"]{background:var(--sun);color:var(--soil)}
+
+/* ==========================================================================
+   MODEL GRID — the library lives inside the Place panel, not in a separate
+   shelf. One region fewer to explain.
+   ========================================================================== */
+.mgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.mcard{
+  border-radius:var(--r2);background:var(--husk);padding:4px;position:relative;
+  box-shadow:inset 0 0 0 1px transparent;
+  transition:background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.mcard canvas{display:block;width:100%;aspect-ratio:1;border-radius:6px;background:#241F17}
+.mcard b{
+  display:block;font-size:10px;font-weight:500;color:var(--straw);
+  text-align:center;padding:4px 2px 2px;line-height:1.25;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mcard:hover{background:var(--husk-2)}
+.mcard:hover b{color:var(--chalk)}
+.mcard[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--sun);background:var(--sun-wash)}
+.mcard[aria-pressed="true"] b{color:var(--sun)}
+.mcard .tick{
+  position:absolute;top:8px;right:8px;width:17px;height:17px;border-radius:99px;
+  background:var(--sun);color:var(--soil);display:none;align-items:center;justify-content:center;
+}
+.mcard .tick svg{width:11px;height:11px}
+.mcard[aria-pressed="true"] .tick{display:flex}
+.mcard.add{background:transparent;box-shadow:inset 0 0 0 1px var(--rule-2)}
+.mcard.add:hover{background:var(--husk)}
+.mcard.add .ph{
+  display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;
+  border-radius:6px;color:var(--sun);
+}
+.mcard.add .ph svg{width:22px;height:22px}
+.empty{
+  grid-column:1/-1;padding:var(--s4);border-radius:var(--r2);
+  background:var(--husk);font-size:var(--fs1);color:var(--straw);line-height:1.55;text-align:center;
+}
+
+/* ==========================================================================
+   SELECTION MARQUEE
+   ========================================================================== */
+#marquee{
+  position:absolute;border:1.5px solid var(--sun);background:var(--sun-wash);
+  border-radius:var(--r1);pointer-events:none;z-index:16;display:none;
+}
+
+/* ==========================================================================
+   WORLD SHEET — everything global, in one place instead of in every mode
+   ========================================================================== */
+.sheet{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s5) var(--s6)}
+.sheet .group{margin-bottom:0}
+@media (max-width:720px){.sheet{grid-template-columns:1fr}}
+
+.layer{
+  display:flex;align-items:center;gap:var(--s3);height:34px;padding:0 6px;
+  border-radius:var(--r1);
+  transition:background var(--dur) var(--ease);
+}
+.layer:hover{background:var(--husk)}
+.layer .sw{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.layer .nm{flex:1 1 auto;font-size:var(--fs1);color:var(--straw);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.layer .ct{font-family:var(--fm);font-size:var(--fs0);color:var(--straw-2);margin-right:2px}
+.layer .ic{
+  width:26px;height:26px;border-radius:var(--r1);color:var(--straw-2);
+  display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.layer .ic svg{width:15px;height:15px}
+.layer .ic:hover{background:var(--husk-2);color:var(--chalk)}
+.layer .ic[aria-pressed="true"]{color:var(--sun)}
+.layer.off .nm,.layer.off .ct{opacity:.4}
+
+.readout{display:flex;gap:var(--s5);flex-wrap:wrap}
+.readout div{display:flex;flex-direction:column;gap:2px}
+.readout i{font-style:normal;font-size:var(--fs0);color:var(--straw-2);
+  text-transform:uppercase;letter-spacing:.1em;font-weight:600;font-variation-settings:"wdth" 118}
+.readout b{font-family:var(--fm);font-size:var(--fs3);font-weight:500;color:var(--chalk)}
+.readout div.warn b{color:var(--clay)}
+
+/* ==========================================================================
+   UNDO HISTORY
+   ========================================================================== */
+#hist{max-height:300px;overflow-y:auto;border-radius:var(--r2);background:#241F17;padding:5px}
+.hrow{
+  display:flex;align-items:center;gap:var(--s3);padding:8px var(--s3);border-radius:var(--r1);
+  font-size:var(--fs1);color:var(--straw);cursor:pointer;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.hrow:hover{background:var(--husk)}
+.hrow.future{opacity:.4}
+.hrow i{font-style:normal;font-family:var(--fm);font-size:var(--fs0);color:var(--straw-2);
+  min-width:24px;text-align:right}
+.hrow.cur{color:var(--sun)}
+.hrow.cur::after{content:"you are here";margin-left:auto;font-size:10px;color:var(--straw-2)}
+
+/* ==========================================================================
+   TEMPLATE CARDS
+   ========================================================================== */
+.cards{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s3)}
+.card{
+  border-radius:var(--r3);background:var(--husk);padding:var(--s4);text-align:left;
+  transition:background var(--dur) var(--ease),transform var(--dur) var(--ease);
+}
+.card:hover{background:var(--husk-2);transform:translateY(-2px)}
+.card b{display:block;font-size:var(--fs3);font-weight:700;font-variation-settings:"wdth" 118;
+  color:var(--chalk);margin-bottom:4px}
+.card span{display:block;font-size:var(--fs1);line-height:1.5;color:var(--straw-2)}
+@media (max-width:620px){.cards{grid-template-columns:1fr}}
+
+/* ==========================================================================
+   NUMERIC TRANSFORMS
+   ========================================================================== */
+.xform{display:grid;grid-template-columns:16px 1fr 1fr 1fr;gap:6px;align-items:center;margin-bottom:6px}
+.xform i{font-style:normal;font-size:var(--fs0);color:var(--straw-2);font-weight:700}
+.xform input{
+  height:28px;background:var(--husk);border:1px solid transparent;border-radius:var(--r1);
+  padding:0 7px;font-family:var(--fm);font-size:var(--fs0);text-align:right;
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);
+}
+.xform input:hover{background:var(--husk-2)}
+.xform input:focus{border-color:var(--sun)}
+
+/* ==========================================================================
+   TOP BAR EXTRAS
+   ========================================================================== */
+#saved{
+  display:flex;align-items:center;gap:6px;font-size:var(--fs1);color:var(--straw-2);
+  opacity:0;transition:opacity var(--slow) var(--ease);white-space:nowrap;
+}
+#saved.on{opacity:1}
+#saved svg{width:14px;height:14px;color:var(--moss)}
+
+#sun-btn{
+  height:36px;padding:0 13px;border-radius:99px;background:var(--husk);
+  display:flex;align-items:center;gap:9px;
+  transition:background var(--dur) var(--ease);
+}
+#sun-btn:hover{background:var(--husk-2)}
+#sun-btn .dot{
+  width:16px;height:16px;border-radius:99px;flex:0 0 auto;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
+}
+#sun-btn b{font-family:var(--fm);font-size:var(--fs0);font-weight:500;color:var(--chalk)}
+
+/* ==========================================================================
+   GUIDED TOUR
+   --------------------------------------------------------------------------
+   The scrim is the hole's own box-shadow, so nothing intercepts clicks: the
+   reader can try each step for real while the card is still on screen.
+   ========================================================================== */
+#tour{position:fixed;inset:0;z-index:400;display:none;pointer-events:none}
+#tour.on{display:block}
+#tour-hole{
+  position:absolute;border-radius:var(--r3);
+  box-shadow:0 0 0 9999px rgba(14,11,7,.74);
+  outline:2px solid var(--sun);outline-offset:3px;
+  transition:top var(--slow) var(--ease),left var(--slow) var(--ease),
+             width var(--slow) var(--ease),height var(--slow) var(--ease);
+}
+#tour-hole.hidden{outline-color:transparent}
+#tour-hole.pulse::after{
+  content:"";position:absolute;inset:-3px;border-radius:inherit;
+  outline:2px solid var(--sun);animation:pulse 1.8s var(--ease) infinite;
+}
+@keyframes pulse{
+  0%{outline-offset:2px;opacity:.9}
+  70%{outline-offset:14px;opacity:0}
+  100%{outline-offset:14px;opacity:0}
+}
+#tour-card{
+  position:absolute;width:330px;max-width:calc(100vw - 32px);
+  background:var(--loam);border-radius:var(--r3);padding:var(--s4) var(--s4) var(--s3);
+  box-shadow:0 26px 64px rgba(0,0,0,.62);pointer-events:auto;
+  transition:top var(--slow) var(--ease),left var(--slow) var(--ease);
+}
+#tour-card .step-no{
+  font-family:var(--fm);font-size:var(--fs0);color:var(--sun);letter-spacing:.06em;
+}
+#tour-card h3{
+  font-size:var(--fs4);font-weight:700;font-variation-settings:"wdth" 118;
+  margin:6px 0 8px;line-height:1.2;
+}
+#tour-card p{font-size:var(--fs2);color:var(--straw);line-height:1.6;margin-bottom:var(--s3)}
+#tour-card p b{color:var(--chalk);font-weight:600}
+#tour-card .tour-foot{display:flex;align-items:center;gap:var(--s2)}
+#tour-card .tour-foot .grow{flex:1 1 auto}
+#tour-dots{display:flex;gap:5px;align-items:center}
+#tour-dots i{width:6px;height:6px;border-radius:99px;background:var(--rule-2);display:block;
+  transition:background var(--dur) var(--ease),width var(--dur) var(--ease)}
+#tour-dots i.on{background:var(--sun);width:16px}
+#tour-card .live{
+  display:inline-flex;align-items:center;gap:7px;font-size:var(--fs0);color:var(--sun);
+  font-weight:600;margin-bottom:var(--s3);
+}
+#tour-card .live::before{
+  content:"";width:7px;height:7px;border-radius:99px;background:var(--sun);
+  animation:blip 1.4s var(--ease) infinite;
+}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ==========================================================================
+   SKETCHFAB BROWSER
+   ========================================================================== */
+.sfbar{display:flex;gap:var(--s2);align-items:center;margin-bottom:var(--s4)}
+.sfbar input[type=text]{
+  flex:1 1 auto;height:var(--ctrlh);background:var(--husk);border:1px solid transparent;
+  border-radius:var(--r2);padding:0 12px;font-size:var(--fs2);
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);
+}
+.sfbar input[type=text]::placeholder{color:var(--straw-2)}
+.sfbar input[type=text]:hover{background:var(--husk-2)}
+.sfbar input[type=text]:focus{border-color:var(--sun)}
+.sfbar .sel{flex:0 0 148px}
+.sfgrid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(146px,1fr));
+  gap:var(--s3);max-height:44vh;overflow-y:auto;padding-right:4px;
+}
+.sfcard{
+  border-radius:var(--r2);background:var(--husk);
+  overflow:hidden;text-align:left;display:flex;flex-direction:column;
+  box-shadow:inset 0 0 0 1px transparent;
+  transition:background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.sfcard:hover{background:var(--husk-2)}
+.sfcard img{width:100%;height:98px;object-fit:cover;background:#241F17;display:block}
+.sfcard .meta{padding:9px 10px 10px}
+.sfcard b{display:block;font-size:var(--fs1);font-weight:600;color:var(--chalk);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfcard span{display:block;font-size:10px;color:var(--straw-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfcard .fc{color:var(--straw);font-family:var(--fm)}
+.sfcard.busy{box-shadow:inset 0 0 0 2px var(--sun);pointer-events:none}
+.sfcard.done{box-shadow:inset 0 0 0 2px var(--moss)}
+.sfprog{height:3px;background:var(--husk-2);overflow:hidden}
+.sfprog i{display:block;height:100%;width:0;background:var(--sun);transition:width 120ms linear}
+.sfmsg{font-size:var(--fs1);color:var(--straw-2);padding:var(--s4) 0;text-align:center;line-height:1.65}
+.sfmsg.err{color:var(--clay)}
+
+/* library rows */
+.lib{display:flex;align-items:center;gap:var(--s3);padding:9px 0;border-top:1px solid var(--rule)}
+.lib:first-child{border-top:0}
+.lib canvas{width:40px;height:40px;border-radius:var(--r1);background:#241F17;flex:0 0 auto}
+.lib .info{flex:1 1 auto;min-width:0}
+.lib .info b{display:block;font-size:var(--fs1);font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib .info span{display:block;font-size:10px;color:var(--straw-2);font-family:var(--fm)}
+.lib .ic{width:28px;height:28px;border-radius:var(--r1);color:var(--straw-2);flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.lib .ic svg{width:15px;height:15px}
+.lib .ic:hover{background:rgba(236,116,88,.16);color:var(--clay)}

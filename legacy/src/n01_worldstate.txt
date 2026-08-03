@@ -1,0 +1,188 @@
+/* ==========================================================================
+   1b. WORLD-BUILDER STATE
+   --------------------------------------------------------------------------
+   Phase 2 extends the same single state object rather than introducing a
+   parallel one. defaultState() is wrapped so every consumer of it — the UI
+   default table, scene loading, presets — picks the new keys up automatically.
+   ========================================================================== */
+
+/* deepMerge() above deliberately only touches keys that already exist (so a
+   stale save file cannot inject junk). Extending the schema needs the opposite:
+   add anything missing, recursively. */
+function assignDeep(dst, src) {
+  for (var k in src) {
+    if (!Object.prototype.hasOwnProperty.call(src, k)) continue;
+    var v = src[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if (!dst[k] || typeof dst[k] !== 'object') dst[k] = {};
+      assignDeep(dst[k], v);
+    } else if (Array.isArray(v)) {
+      if (!Array.isArray(dst[k])) dst[k] = v.slice();
+    } else if (dst[k] === undefined) {
+      dst[k] = v;
+    }
+  }
+  return dst;
+}
+
+function worldDefaults() {
+  return {
+    ui: { moreOpen: false },
+
+    world: {
+      mode: 'terrain',
+      quality: 'high',
+      simulate: true,
+      seenIntro: false,
+      showLayers: true
+    },
+
+    plate: {
+      /* --- heightmap --- */
+      resolution: 256,
+      landform: 'rolling',
+      seed: 20260802,
+      heightScale: 1,
+      /* --- slope + altitude auto-texturing --- */
+      autoTex: true,
+      grassColor: '#46702c',
+      dirtColor: '#6d5c3e',
+      rockColor: '#6a6b6e',
+      snowColor: '#e6edf2',
+      rockSlope: 0.74,       // surface normal .y below this reads as cliff
+      rockBlend: 0.14,
+      snowOn: false,
+      snowline: 7,
+      snowBlend: 2.4,
+      maxGrassSlope: 0.62,   // blades refuse to grow where normal.y is lower
+      /* --- water --- */
+      water: false,
+      waterLevel: -0.8,
+      waterColor: '#2f6f8f',
+      waterDeep: '#123648',
+      waterOpacity: 0.86,
+      waveScale: 0.55,
+      waveSpeed: 0.55,
+      foam: 1
+    },
+
+    sculpt: {
+      mode: 'raise',
+      strength: 0.55,
+      noiseScale: 0.65,
+      talus: 0.55,
+      erodeIters: 3
+    },
+
+    road: {
+      type: 'street',
+      material: 'asphalt',
+      width: 7,
+      markings: true,
+      curb: 0.14,
+      sidewalkL: true,
+      sidewalkR: true,
+      sidewalkW: 1.9,
+      flatten: 0.9,
+      carve: 0.8,
+      clearGrass: true,
+      autoLights: false, lightSpacing: 16, lightKind: '',
+      autoTrees: false, treeSpacing: 12, treeKind: '',
+      autoSigns: false, signKind: '',
+      decoJitter: 0.35
+    },
+
+    /* One station places everything, so one record says what is selected and
+       how big it goes down. The per-kind knobs below are still what the
+       engine reads — buildings take the `build` set, everything else takes
+       the `nature` set — the Place panel just drives both. */
+    place: {
+      kind: '',      // the one that a click puts down
+      kinds: [],     // the mix the scatter brush draws from
+      size: 1
+    },
+
+    build: {
+      kind: '',
+      snap: 'free',
+      gridSize: 2,
+      setback: 5,
+      upright: true,
+      rotJitter: 8,
+      scaleMin: 0.92, scaleMax: 1.1,
+      spacing: 8,
+      density: 0.5,
+      flatten: true,
+      rotation: 0,
+      scale: 1
+    },
+
+    nature: {
+      kinds: [],
+      density: 0.45,
+      scaleMin: 0.75, scaleMax: 1.35,
+      rotJitter: 180,
+      spacing: 1.8,
+      minNormalY: 0.72,
+      minAlt: -999, maxAlt: 999,
+      alignNormal: 0.35
+    },
+
+    people: {
+      count: 12,
+      speed: 1.15, speedVar: 0.4,
+      pose: 'stand',
+      place: '',
+      pathWidth: 1.6
+    },
+
+    traffic: {
+      count: 6,
+      speed: 8, speedVar: 0.25,
+      spacing: 16
+    },
+
+    /* Remove takes objects, not grass — grass has its own eraser one station
+       up, and wiping a field by accident is the worst surprise in the tool. */
+    eraseMask: { grass: false, nature: true, props: true, buildings: true, people: true, vehicles: true },
+
+    sel: { gizmo: 'move', nudge: 0.5 },
+
+    cam: {
+      flySpeed: 22,       // units per second with WASD
+      boost: 3.5,         // Shift multiplier
+      lookSens: 1,
+      invertY: false
+    }
+  };
+}
+
+/* Wrap the factory so DEFAULTS, presets and scene loads all agree. */
+(function () {
+  var base = defaultState;
+  defaultState = function () { return assignDeep(base(), worldDefaults()); };
+})();
+assignDeep(state, worldDefaults());
+
+/* ---- capacities ---------------------------------------------------------
+   Instance layers grow on demand up to these ceilings; the stats overlay
+   surfaces how much of each is in use. */
+var CAP = {
+  nature: 60000,
+  props: 20000,
+  buildings: 4000,
+  people: 2000,
+  vehicles: 600
+};
+
+/* ---- quality presets ----------------------------------------------------
+   One slider that moves draw distance, grass density, animation budget and
+   terrain detail together. */
+var QUALITY = {
+  low:    { label: 'Low',    draw: 90,  grass: 0.45, anim: 24,  fade: 0.55, shadow: 0.35, water: 0 },
+  medium: { label: 'Medium', draw: 150, grass: 0.7,  anim: 60,  fade: 0.7,  shadow: 0.45, water: 1 },
+  high:   { label: 'High',   draw: 260, grass: 1.0,  anim: 140, fade: 0.85, shadow: 0.55, water: 1 },
+  ultra:  { label: 'Ultra',  draw: 460, grass: 1.0,  anim: 400, fade: 1.0,  shadow: 0.65, water: 1 }
+};
+function Q() { return QUALITY[state.world.quality] || QUALITY.high; }
+

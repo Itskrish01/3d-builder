@@ -1,0 +1,531 @@
+/* ==========================================================================
+   13. UI — one component vocabulary. Every control is built by these helpers
+   so spacing, hover, focus and timing are identical everywhere.
+   --------------------------------------------------------------------------
+   Two lists of live controls: the ones in the settings panel, and the ones
+   in whatever modal is open. Both are refreshed by refreshUI(); the modal
+   list is emptied when the modal closes, so nothing accumulates.
+   ========================================================================== */
+var DEFAULTS = defaultState();
+var UI = { controls: [], transient: [], sink: null, tipEl: null, tipTimer: 0 };
+
+function uiPush(c) { (UI.sink || UI.controls).push(c); }
+
+function el(tag, cls, txt) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt !== undefined) e.textContent = txt;
+  return e;
+}
+function svgIcon(path, extra) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' +
+    (extra || 1.9) + '" stroke-linecap="round" stroke-linejoin="round">' + path + '</svg>';
+}
+
+/* ---- tooltips ------------------------------------------------------------ */
+function initTooltips() {
+  UI.tipEl = document.getElementById('tip');
+  document.addEventListener('pointerover', function (e) {
+    var t = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (!t) return;
+    clearTimeout(UI.tipTimer);
+    UI.tipTimer = setTimeout(function () { showTip(t); }, 420);
+  });
+  document.addEventListener('pointerout', function (e) {
+    var t = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (!t) return;
+    clearTimeout(UI.tipTimer);
+    UI.tipEl.classList.remove('on');
+  });
+  window.addEventListener('pointerdown', function () {
+    clearTimeout(UI.tipTimer); UI.tipEl.classList.remove('on');
+  }, true);
+}
+function showTip(t) {
+  var e = UI.tipEl;
+  var key = t.getAttribute('data-key');
+  e.innerHTML = '';
+  e.appendChild(document.createTextNode(t.getAttribute('data-tip')));
+  if (key) {
+    var k = el('span', 'k');
+    k.textContent = key;
+    e.appendChild(k);
+  }
+  e.classList.add('on');
+  var r = t.getBoundingClientRect(), er = e.getBoundingClientRect();
+  var x = r.left + r.width / 2 - er.width / 2;
+  var y = r.top - er.height - 10;
+  if (y < 6) y = r.bottom + 10;
+  e.style.left = clamp(x, 8, window.innerWidth - er.width - 8) + 'px';
+  e.style.top = y + 'px';
+}
+
+/* ---- toasts -------------------------------------------------------------- */
+/* Pass an id to reuse the same toast instead of stacking a new one — used by
+   readouts that fire repeatedly, like fly speed while scrolling. */
+var _toastById = {};
+function toast(msg, kind, ms, id) {
+  var host = document.getElementById('toasts');
+  if (id && _toastById[id] && _toastById[id].parentNode) {
+    var ex = _toastById[id];
+    ex.textContent = msg;
+    clearTimeout(ex._t);
+    ex._t = setTimeout(function () {
+      ex.style.transition = 'opacity 200ms';
+      ex.style.opacity = '0';
+      setTimeout(function () { ex.remove(); delete _toastById[id]; }, 220);
+    }, ms || 2400);
+    return ex;
+  }
+  var t = el('div', 'toast' + (kind ? ' ' + kind : ''), msg);
+  host.appendChild(t);
+  if (id) _toastById[id] = t;
+  t._t = setTimeout(function () {
+    t.style.transition = 'opacity 200ms';
+    t.style.opacity = '0';
+    setTimeout(function () { t.remove(); if (id) delete _toastById[id]; }, 220);
+  }, ms || 2400);
+  return t;
+}
+
+/* ---- modal --------------------------------------------------------------- */
+var _modal = null;
+function openModal(title, buildBody, actions, opts) {
+  closeModal();
+  var scrim = el('div', 'scrim');
+  var m = el('div', 'modal' + (opts && opts.wide ? ' wide-modal' : ''));
+  var head = el('div', 'modal-head');
+  head.appendChild(el('b', null, title));
+  var x = el('button', 'btn icon ghost');
+  x.innerHTML = svgIcon('<path d="M18 6 6 18M6 6l12 12"/>');
+  x.setAttribute('data-tip', 'Close');
+  x.onclick = closeModal;
+  head.appendChild(x);
+  var body = el('div', 'modal-body');
+
+  UI.transient.length = 0;
+  UI.sink = UI.transient;
+  buildBody(body);
+  UI.sink = null;
+
+  if (actions && actions.length) {
+    var row = el('div', 'btn-row');
+    actions.forEach(function (a) {
+      var b = el('button', 'btn' + (a.kind ? ' ' + a.kind : ''), a.label);
+      b.onclick = function () { closeModal(); a.run && a.run(); };
+      row.appendChild(b);
+    });
+    body.appendChild(row);
+  }
+  m.appendChild(head); m.appendChild(body); scrim.appendChild(m);
+  scrim.addEventListener('pointerdown', function (e) { if (e.target === scrim) closeModal(); });
+  document.body.appendChild(scrim);
+  _modal = scrim;
+}
+function closeModal() {
+  if (!_modal) return;
+  _modal.remove(); _modal = null;
+  UI.sink = null; UI.transient.length = 0;
+}
+
+function confirmDialog(title, message, okLabel, run) {
+  openModal(title, function (b) {
+    b.appendChild(el('p', null, message));
+  }, [
+    { label: 'Cancel' },
+    { label: okLabel, kind: 'dgr', run: run }
+  ]);
+}
+
+/* ---- change dispatcher --------------------------------------------------- */
+function applyChange(tags) {
+  if (!tags) { markSceneDirty(); return; }
+  if (tags.indexOf('template') >= 0) rebuildBladeTemplate();
+  if (tags.indexOf('plate') >= 0) rebuildPlate();
+  if (tags.indexOf('grass') >= 0) syncGrassUniforms();
+  if (tags.indexOf('ground') >= 0) syncGroundUniforms();
+  if (tags.indexOf('env') >= 0) syncEnvUniforms();
+  if (tags.indexOf('dens') >= 0) { Dens.dirty = true; }
+  if (tags.indexOf('water') >= 0) rebuildWater();
+  if (tags.indexOf('roads') >= 0) rebuildAllRoads();
+  markSceneDirty();
+}
+
+/* ---- layout blocks -------------------------------------------------------
+   A group is a titled run of controls. There is no accordion any more: a mode
+   shows what it needs, and everything else is behind one "All settings" line.
+   -------------------------------------------------------------------------- */
+function addGroup(host, title) {
+  var g = el('div', 'group');
+  if (title) g.appendChild(el('div', 'group-title wide', title));
+  var body = el('div');
+  g.appendChild(body);
+  host.appendChild(g);
+  return body;
+}
+function addNote(host, text) {
+  var n = el('div', 'note');
+  n.innerHTML = text;
+  host.appendChild(n);
+  return n;
+}
+
+/* ---- controls bind either to a state path or to an explicit get/set pair -- */
+function ctrlGet(cfg) { return cfg.get ? cfg.get() : getPath(state, cfg.path); }
+function ctrlSet(cfg, v) { if (cfg.set) cfg.set(v); else setPath(state, cfg.path, v); }
+
+/* ---- SLIDER --------------------------------------------------------------
+   Drag anywhere on the track, shift-drag for fine control, double-click to
+   reset to the default, and direct numeric entry in the value box.
+   -------------------------------------------------------------------------- */
+function addSlider(parent, cfg) {
+  var def = (cfg.def !== undefined) ? cfg.def : (cfg.path ? getPath(DEFAULTS, cfg.path) : ctrlGet(cfg));
+  var dec = (cfg.dec === undefined) ? 2 : cfg.dec;
+  var unit = cfg.unit || '';
+
+  var row = el('div', 'ctrl');
+  var top = el('div', 'ctrl-top');
+  var lab = el('div', 'ctrl-label', cfg.label);
+  var val = el('input', 'ctrl-val');
+  val.type = 'text'; val.spellcheck = false;
+  top.appendChild(lab); top.appendChild(val);
+
+  var sl = el('div', 'slider');
+  var trk = el('div', 'trk'), fill = el('div', 'fill'), knob = el('div', 'knob');
+  sl.appendChild(trk); sl.appendChild(fill); sl.appendChild(knob);
+  row.appendChild(top); row.appendChild(sl);
+  parent.appendChild(row);
+
+  row.setAttribute('data-tip', cfg.tip || cfg.label);
+  if (cfg.key) row.setAttribute('data-key', cfg.key);
+
+  function fmt(v) { return cfg.format ? cfg.format(v) : (v.toFixed(dec) + unit); }
+  function paint() {
+    var v = ctrlGet(cfg);
+    var t = clamp((v - cfg.min) / (cfg.max - cfg.min), 0, 1);
+    fill.style.width = (t * 100) + '%';
+    knob.style.left = (t * 100) + '%';
+    if (document.activeElement !== val) val.value = fmt(v);
+  }
+  function commit(v) {
+    v = clamp(v, cfg.min, cfg.max);
+    if (cfg.step) v = Math.round(v / cfg.step) * cfg.step;
+    v = clamp(v, cfg.min, cfg.max);
+    var cur = ctrlGet(cfg);
+    if (v === cur) { paint(); return; }
+    ctrlSet(cfg, v);
+    paint();
+    applyChange(cfg.apply);
+    if (cfg.onChange) cfg.onChange(v);
+  }
+  function fromX(cx) {
+    var r = sl.getBoundingClientRect();
+    commit(cfg.min + clamp((cx - r.left) / r.width, 0, 1) * (cfg.max - cfg.min));
+  }
+
+  var dragging = false, lastX = 0;
+  sl.addEventListener('pointerdown', function (e) {
+    dragging = true; lastX = e.clientX;
+    sl.setPointerCapture(e.pointerId);
+    sl.classList.add('act');
+    if (!e.shiftKey) fromX(e.clientX);
+    e.preventDefault(); e.stopPropagation();
+  });
+  sl.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    if (e.shiftKey) {
+      sl.classList.add('fine');
+      var w = sl.getBoundingClientRect().width || 1;
+      commit(ctrlGet(cfg) + (e.clientX - lastX) / w * (cfg.max - cfg.min) * 0.16);
+    } else {
+      sl.classList.remove('fine');
+      fromX(e.clientX);
+    }
+    lastX = e.clientX;
+  });
+  function stop(e) {
+    if (!dragging) return;
+    dragging = false;
+    sl.classList.remove('act', 'fine');
+    try { sl.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  sl.addEventListener('pointerup', stop);
+  sl.addEventListener('pointercancel', stop);
+  sl.addEventListener('dblclick', function () { commit(def); toast(cfg.label + ' back to normal'); });
+
+  val.addEventListener('focus', function () { val.select(); });
+  val.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { val.blur(); }
+    else if (e.key === 'Escape') { paint(); val.blur(); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      var s = (cfg.step || (cfg.max - cfg.min) / 100) * (e.shiftKey ? 10 : 1);
+      commit(ctrlGet(cfg) + (e.key === 'ArrowUp' ? s : -s));
+      e.preventDefault();
+    }
+    e.stopPropagation();
+  });
+  val.addEventListener('blur', function () {
+    var n = parseFloat(String(val.value).replace(/[^0-9.+-eE]/g, ''));
+    if (isFinite(n)) commit(n); else paint();
+  });
+
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- SELECT --------------------------------------------------------------- */
+function addSelect(parent, cfg) {
+  var row = el('div', 'ctrl');
+  if (cfg.label) {
+    var top = el('div', 'ctrl-top');
+    top.appendChild(el('div', 'ctrl-label', cfg.label));
+    row.appendChild(top);
+  }
+  var wrap = el('div', 'sel');
+  var s = el('select');
+  cfg.options.forEach(function (o) {
+    var op = el('option', null, o.label);
+    op.value = o.value;
+    s.appendChild(op);
+  });
+  wrap.appendChild(s);
+  wrap.insertAdjacentHTML('beforeend', svgIcon('<path d="m6 9 6 6 6-6"/>', 2));
+  row.appendChild(wrap);
+  parent.appendChild(row);
+  row.setAttribute('data-tip', cfg.tip || cfg.label);
+
+  function paint() { s.value = String(ctrlGet(cfg)); }
+  s.addEventListener('change', function () {
+    ctrlSet(cfg, s.value);
+    applyChange(cfg.apply);
+    if (cfg.onChange) cfg.onChange(s.value);
+    refreshUI();
+  });
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- SEGMENTED ------------------------------------------------------------ */
+function addSegment(parent, cfg) {
+  var row = el('div', 'ctrl');
+  if (cfg.label) {
+    var top = el('div', 'ctrl-top');
+    top.appendChild(el('div', 'ctrl-label', cfg.label));
+    row.appendChild(top);
+  }
+  var seg = el('div', 'seg');
+  var btns = cfg.options.map(function (o) {
+    var b = el('button', null, o.label);
+    b.setAttribute('data-tip', o.tip || o.label);
+    b.onclick = function () {
+      ctrlSet(cfg, o.value);
+      applyChange(cfg.apply);
+      if (cfg.onChange) cfg.onChange(o.value);
+      refreshUI();
+    };
+    seg.appendChild(b);
+    return { b: b, v: o.value };
+  });
+  row.appendChild(seg);
+  parent.appendChild(row);
+  function paint() {
+    var v = String(ctrlGet(cfg));
+    btns.forEach(function (x) { x.b.setAttribute('aria-pressed', String(x.v) === v ? 'true' : 'false'); });
+  }
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- CHIPS ---------------------------------------------------------------
+   A wrapping row of named choices. Used where the options have real names
+   worth reading — landforms, grass looks — rather than numbers to dial in.
+   -------------------------------------------------------------------------- */
+function addChips(parent, cfg) {
+  var row = el('div', 'ctrl');
+  if (cfg.label) {
+    var top = el('div', 'ctrl-top');
+    top.appendChild(el('div', 'ctrl-label', cfg.label));
+    row.appendChild(top);
+  }
+  var wrap = el('div', 'chips');
+  var btns = cfg.options.map(function (o) {
+    var b = el('button', 'chip');
+    if (o.swatch) {
+      var sw = el('i');
+      sw.style.background = o.swatch;
+      b.appendChild(sw);
+    }
+    b.appendChild(document.createTextNode(o.label));
+    b.setAttribute('data-tip', o.tip || o.label);
+    b.onclick = function () {
+      if (cfg.path || cfg.set) ctrlSet(cfg, o.value);
+      applyChange(cfg.apply);
+      if (cfg.onChange) cfg.onChange(o.value);
+      refreshUI();
+    };
+    wrap.appendChild(b);
+    return { b: b, v: o.value };
+  });
+  row.appendChild(wrap);
+  parent.appendChild(row);
+  function paint() {
+    if (!cfg.path && !cfg.get) return;
+    var v = String(ctrlGet(cfg));
+    btns.forEach(function (x) { x.b.setAttribute('aria-pressed', String(x.v) === v ? 'true' : 'false'); });
+  }
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- TOGGLE ---------------------------------------------------------------- */
+function addToggle(parent, cfg) {
+  var row = el('div', 'ctrl row');
+  row.appendChild(el('div', 'ctrl-label', cfg.label));
+  var t = el('button', 'tgl');
+  row.appendChild(t);
+  parent.appendChild(row);
+  row.setAttribute('data-tip', cfg.tip || cfg.label);
+  if (cfg.key) row.setAttribute('data-key', cfg.key);
+  function paint() { t.setAttribute('aria-pressed', ctrlGet(cfg) ? 'true' : 'false'); }
+  t.onclick = function () {
+    ctrlSet(cfg, !ctrlGet(cfg));
+    paint();
+    applyChange(cfg.apply);
+    if (cfg.onChange) cfg.onChange(ctrlGet(cfg));
+  };
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- COLOUR ---------------------------------------------------------------- */
+function addColor(parent, cfg) {
+  var row = el('div', 'ctrl');
+  var top = el('div', 'ctrl-top');
+  top.appendChild(el('div', 'ctrl-label', cfg.label));
+  row.appendChild(top);
+  var c = el('div', 'col');
+  var sw = el('div', 'sw');
+  var inp = el('input'); inp.type = 'color';
+  sw.appendChild(inp);
+  var hex = el('input', 'hex'); hex.type = 'text'; hex.spellcheck = false;
+  c.appendChild(sw); c.appendChild(hex);
+  row.appendChild(c);
+  parent.appendChild(row);
+  row.setAttribute('data-tip', cfg.tip || cfg.label);
+
+  function paint() {
+    var v = ctrlGet(cfg);
+    inp.value = v;
+    if (document.activeElement !== hex) hex.value = v.toUpperCase();
+    sw.style.background = v;
+  }
+  function commit(v) {
+    if (!/^#?[0-9a-fA-F]{6}$/.test(v) && !/^#?[0-9a-fA-F]{3}$/.test(v)) { paint(); return; }
+    if (v[0] !== '#') v = '#' + v;
+    if (v.length === 4) v = '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+    ctrlSet(cfg, v.toLowerCase());
+    paint();
+    applyChange(cfg.apply);
+    if (cfg.onChange) cfg.onChange(v);
+  }
+  inp.addEventListener('input', function () { commit(inp.value); });
+  hex.addEventListener('keydown', function (e) { if (e.key === 'Enter') hex.blur(); e.stopPropagation(); });
+  hex.addEventListener('blur', function () { commit(hex.value.trim()); });
+  uiPush({ refresh: paint });
+  paint();
+  return row;
+}
+
+/* ---- WIND DIAL -------------------------------------------------------------- */
+function addDial(parent, cfg) {
+  var wrap = el('div', 'dial');
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  var rim = document.createElementNS(NS, 'circle');
+  rim.setAttribute('cx', 50); rim.setAttribute('cy', 50); rim.setAttribute('r', 46);
+  rim.setAttribute('class', 'dial-rim');
+  svg.appendChild(rim);
+  for (var a = 0; a < 12; a++) {
+    var t = document.createElementNS(NS, 'line');
+    var ang = a / 12 * TAU, r0 = a % 3 === 0 ? 32 : 38;
+    t.setAttribute('x1', 50 + Math.sin(ang) * r0); t.setAttribute('y1', 50 - Math.cos(ang) * r0);
+    t.setAttribute('x2', 50 + Math.sin(ang) * 42); t.setAttribute('y2', 50 - Math.cos(ang) * 42);
+    t.setAttribute('class', 'dial-tick');
+    svg.appendChild(t);
+  }
+  var arrow = document.createElementNS(NS, 'polygon');
+  arrow.setAttribute('class', 'dial-arrow');
+  svg.appendChild(arrow);
+  var hub = document.createElementNS(NS, 'circle');
+  hub.setAttribute('cx', 50); hub.setAttribute('cy', 50); hub.setAttribute('r', 6);
+  hub.setAttribute('class', 'dial-hub');
+  svg.appendChild(hub);
+
+  var info = el('div', 'dial-info');
+  wrap.appendChild(svg); wrap.appendChild(info);
+  parent.appendChild(wrap);
+  svg.setAttribute('data-tip', cfg.tip || 'Drag to point the wind somewhere else');
+
+  addSlider(info, {
+    label: cfg.label, path: cfg.path, min: 0, max: 360, step: 1, dec: 0, unit: '°',
+    tip: cfg.tip, apply: cfg.apply, onChange: function () { paint(); }
+  });
+  if (cfg.extra) cfg.extra(info);
+
+  function paint() {
+    var deg = ctrlGet(cfg), r = deg * DEG;
+    var sx = Math.sin(r), sy = -Math.cos(r);
+    var px = 50 + sx * 30, py = 50 + sy * 30;
+    var bx = 50 - sx * 12, by = 50 - sy * 12;
+    var ox = -sy * 8, oy = sx * 8;
+    arrow.setAttribute('points',
+      px + ',' + py + ' ' + (bx + ox) + ',' + (by + oy) + ' ' + (bx - ox) + ',' + (by - oy));
+  }
+  var drag = false;
+  function fromEvent(e) {
+    var r = svg.getBoundingClientRect();
+    var dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    var deg = (Math.atan2(dx, -dy) / DEG + 360) % 360;
+    if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+    setPath(state, cfg.path, Math.round(deg) % 360);
+    paint(); refreshUI(); applyChange(cfg.apply);
+  }
+  svg.addEventListener('pointerdown', function (e) {
+    drag = true; svg.setPointerCapture(e.pointerId); fromEvent(e); e.preventDefault();
+  });
+  svg.addEventListener('pointermove', function (e) { if (drag) fromEvent(e); });
+  svg.addEventListener('pointerup', function (e) {
+    drag = false; try { svg.releasePointerCapture(e.pointerId); } catch (x) {}
+  });
+  uiPush({ refresh: paint });
+  paint();
+}
+
+/* ---- button rows ----------------------------------------------------------- */
+function addButtons(parent, list) {
+  var row = el('div', 'btn-row');
+  list.forEach(function (b) {
+    var e2 = el('button', 'btn' + (b.kind ? ' ' + b.kind : ''));
+    if (b.icon) e2.innerHTML = svgIcon(b.icon);
+    e2.appendChild(document.createTextNode(b.label));
+    e2.setAttribute('data-tip', b.tip || b.label);
+    if (b.key) e2.setAttribute('data-key', b.key);
+    if (b.id) e2.id = b.id;
+    e2.onclick = b.run;
+    row.appendChild(e2);
+  });
+  parent.appendChild(row);
+  return row;
+}
+
+function refreshUI() {
+  var i;
+  for (i = 0; i < UI.controls.length; i++) UI.controls[i].refresh();
+  for (i = 0; i < UI.transient.length; i++) UI.transient[i].refresh();
+}

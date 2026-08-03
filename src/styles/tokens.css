@@ -1,0 +1,62 @@
+/* ============================================================================
+   DESIGN TOKENS
+
+   Direction: "field station". The chrome is soil at dusk and the one accent is
+   the sun — because green is the material the person paints, and an interface
+   that is also green competes with the work. Gold never occurs in a midday
+   field, so it always reads as interface.
+   ========================================================================== */
+:root {
+  /* --- the six --- */
+  --soil: #16130e;      /* the void behind everything */
+  --loam: #1f1b14;      /* chrome surfaces: bar, rail, panel */
+  --husk: #2c271d;      /* raised things: inputs, tracks, buttons */
+  --chalk: #f2ede1;     /* primary text */
+  --sun: #ffb43d;       /* the single accent */
+  --clay: #ec7458;      /* destructive, and only destructive */
+
+  /* --- derived --- */
+  --husk-2: #3a3428;
+  --straw: #a79b84;     /* secondary text */
+  --straw-2: #948871;   /* tertiary text — lifted to clear 4.5:1 on --loam */
+  --rule: #332c21;      /* hairlines */
+  --rule-2: #443c2e;
+  --sun-wash: rgb(255 180 61 / 14%);
+  --sun-deep: #b57a1e;
+  --moss: #8fbf52;      /* the one tie back to the content: grass readouts */
+  --well: #241f17;      /* inset wells: thumbnails, lists */
+
+  /* radii — softer than a pro DCC tool, because this is for beginners */
+  --r1: 5px;
+  --r2: 9px;
+  --r3: 13px;
+  --r4: 18px;
+
+  /* spacing */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 34px;
+
+  /* type */
+  --f: "Archivo", -apple-system, blinkmacsystemfont, "Segoe UI", roboto, helvetica, arial, sans-serif;
+  --fm: "IBM Plex Mono", ui-monospace, sfmono-regular, menlo, consolas, monospace;
+  --fs0: 11px;   /* micro: units, counts */
+  --fs1: 12px;   /* control labels */
+  --fs2: 13px;   /* body, buttons */
+  --fs3: 15px;   /* section titles */
+  --fs4: 19px;   /* panel and dialog titles */
+
+  /* motion */
+  --dur: 140ms;
+  --slow: 260ms;
+  --ease: cubic-bezier(0.32, 0.72, 0.35, 1);
+
+  /* metrics */
+  --rail: 92px;
+  --panelw: 320px;
+  --topbar: 52px;
+  --ctrlh: 32px;
+}

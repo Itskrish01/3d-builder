@@ -1,0 +1,128 @@
+import * as THREE from 'three';
+import { Env, scene } from './renderer.js';
+import { WATER_FS, WATER_VS } from './shaders.js';
+import { Q, state } from './state.js';
+import { Terrain, heightAt } from './terrain.js';
+import { clamp, hexLin } from './util.js';
+
+/* ==========================================================================
+   6c. WATER
+   --------------------------------------------------------------------------
+   A grid laid over the plate whose per-vertex depth is baked on the CPU. The
+   depth attribute drives the shallow/deep ramp, the shoreline foam and the
+   alpha cutoff, so there is no depth prepass and no render target involved.
+   ========================================================================== */
+export var Water = { mesh: null, geo: null, mat: null, N: 0, dirty: true, lastBuild: 0 };
+
+export function waterSegs() {
+  return clamp(Math.min(Terrain.N, 160), 8, 160);
+}
+
+export function createWater() {
+  Water.mat = new THREE.ShaderMaterial({
+    vertexShader: WATER_VS,
+    fragmentShader: WATER_FS,
+    uniforms: {
+      uTime: { value: 0 },
+      uWaveScale: { value: 0.55 }, uWaveSpeed: { value: 0.55 },
+      uLevel: { value: -0.8 }, uSimulate: { value: 1 },
+      uShallow: { value: new THREE.Vector3() }, uDeep: { value: new THREE.Vector3() },
+      uSunDir: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Vector3() },
+      uSkyColor: { value: new THREE.Vector3() },
+      uExposure: { value: 1.05 }, uOpacity: { value: 0.86 }, uFoam: { value: 1 },
+      uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0.0075 }
+    },
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  Water.mesh = new THREE.Mesh(new THREE.BufferGeometry(), Water.mat);
+  Water.mesh.frustumCulled = false;
+  Water.mesh.renderOrder = 40;
+  Water.mesh.visible = false;
+  scene.add(Water.mesh);
+  rebuildWater();
+}
+
+export function rebuildWater() {
+  var p = state.plate;
+  Water.mesh.visible = !!p.water && Q().water > 0;
+  Water.dirty = false;
+  if (!Water.mesh.visible) return;
+
+  var N = waterSegs(), W = N + 1;
+  var rebuildIndex = (Water.N !== N) || !Water.geo;
+  if (rebuildIndex) {
+    if (Water.geo) Water.geo.dispose();
+    Water.geo = new THREE.BufferGeometry();
+    Water.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(W * W * 3), 3));
+    Water.geo.setAttribute('aDepth', new THREE.BufferAttribute(new Float32Array(W * W), 1));
+    var idx = (W * W > 65535) ? new Uint32Array(N * N * 6) : new Uint16Array(N * N * 6);
+    var o = 0;
+    for (var j = 0; j < N; j++) for (var i = 0; i < N; i++) {
+      var a = j * W + i, b = a + 1, c = a + W, d = c + 1;
+      idx[o++] = a; idx[o++] = c; idx[o++] = b;
+      idx[o++] = b; idx[o++] = c; idx[o++] = d;
+    }
+    Water.geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    Water.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    Water.N = N;
+    Water.mesh.geometry = Water.geo;
+  }
+
+  var pos = Water.geo.attributes.position.array;
+  var dep = Water.geo.attributes.aDepth.array;
+  var lvl = p.waterLevel;
+  for (var jj = 0; jj < W; jj++) {
+    var z = (jj / N - 0.5) * p.depth;
+    for (var ii = 0; ii < W; ii++) {
+      var x = (ii / N - 0.5) * p.width;
+      var k = jj * W + ii, o3 = k * 3;
+      pos[o3] = x; pos[o3 + 1] = lvl; pos[o3 + 2] = z;
+      dep[k] = lvl - heightAt(x, z);
+    }
+  }
+  Water.geo.attributes.position.needsUpdate = true;
+  Water.geo.attributes.aDepth.needsUpdate = true;
+  syncWaterUniforms();
+}
+
+export function syncWaterUniforms() {
+  if (!Water.mat) return;
+  var p = state.plate, u = Water.mat.uniforms;
+  u.uLevel.value = p.waterLevel;
+  u.uWaveScale.value = p.waveScale;
+  u.uWaveSpeed.value = p.waveSpeed;
+  u.uOpacity.value = p.waterOpacity;
+  u.uFoam.value = p.foam;
+  hexLin(p.waterColor, u.uShallow.value);
+  hexLin(p.waterDeep, u.uDeep.value);
+  u.uSunDir.value.copy(Env.sunDir);
+  u.uSunColor.value.copy(Env.sun);
+  u.uSkyColor.value.copy(Env.amb);
+  u.uExposure.value = state.env.exposure;
+  u.uFogColor.value.copy(Env.fog);
+  u.uFogDensity.value = state.env.fogDensity;
+  u.uSimulate.value = state.world.simulate ? 1 : 0;
+}
+
+/* Terrain edits invalidate the depth field; throttle the rebuild so dragging a
+   sculpt brush does not re-bake the whole water grid every frame. */
+export function waterTick(now) {
+  if (!Water.dirty) return;
+  if (now - Water.lastBuild < 120) return;
+  Water.lastBuild = now;
+  rebuildWater();
+}
+
+/* Height of the world surface including water, used when placing props that
+   should sit on a lake rather than under it. */
+export function surfaceY(x, z) {
+  var h = heightAt(x, z);
+  if (state.plate.water && state.plate.waterLevel > h) return state.plate.waterLevel;
+  return h;
+}
+export function underWater(x, z) {
+  return !!state.plate.water && state.plate.waterLevel > heightAt(x, z);
+}
+

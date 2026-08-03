@@ -1,0 +1,218 @@
+'use strict';
+/* ==========================================================================
+   GRASS PAINTER
+   --------------------------------------------------------------------------
+   Section map:
+     1  STATE            central source of truth; UI writes it, systems read it
+     2  MATH             deterministic RNG, simplex noise, colour helpers
+     3  SHADERS          GLSL for grass / ground / sky / ball / brush ring
+     4  RENDERER + CAM   WebGL setup and the orbit camera
+     5  ENVIRONMENT      time-of-day model, sky, fog
+     6  TERRAIN          heightfield, ground mesh, ray marching, sculpting
+     7  GRASS SYSTEM     instanced buffers, add/remove, density grid
+     8  PUSH FIELD       damped spring field that drives interactive bending
+     9  BRUSH            stamping, stroke interpolation, tools
+    10  HISTORY          undo / redo
+    11  PRESETS
+    12  PERSISTENCE      save / load / autosave / PNG
+    13  UI               control components + panel schema
+    14  INPUT            pointer + keyboard
+    15  LOOP
+
+   Everything below lives inside __GP_MAIN__, which the CDN loader calls once
+   THREE is guaranteed to be present — so no statement here can run too early.
+   ========================================================================== */
+function __GP_MAIN__() {
+
+/* ==========================================================================
+   1. STATE
+   ========================================================================== */
+
+var MAX_BLADES = 300000;          // hard capacity of the instanced buffers
+var DENS_N     = 128;             // density / contact-shadow grid resolution
+var FIELD_N    = 160;             // interaction (push) field resolution
+
+function defaultState() {
+  return {
+    tool: 'paint',
+    brush: {
+      radius: 3.2,
+      flow: 0.55,
+      falloff: 0.55,
+      scatter: 0.85,
+      maxDensity: 90,
+      tilt: 0.22,
+      sculpt: 'raise',
+      sculptStrength: 0.5
+    },
+    grass: {
+      height: 1.05, heightVar: 0.42,
+      width: 0.062, widthVar: 0.28,
+      taper: 1.05,
+      curve: 0.5, curveVar: 0.45,
+      segments: 5,
+      bladeCurl: 0.55,
+      baseColor: '#2c521e',
+      tipColor: '#8cc84b',
+      gradPow: 1.5,
+      hueVar: 0.05, satVar: 0.2, valVar: 0.24,
+      density: 1.0,
+      stiffMin: 0.55, stiffMax: 1.5,
+      ao: 0.62,
+      translucency: 1.0,
+      specular: 0.22,
+      roughness: 0.6
+    },
+    wind: {
+      strength: 0.5,
+      direction: 42,
+      speed: 0.34,
+      turbulence: 0.62,
+      waveScale: 0.075,
+      gustFreq: 0.17,
+      gustStrength: 0.85,
+      gustSpeed: 1.5
+    },
+    interact: {
+      radius: 2.6, strength: 1.25, recovery: 5.5, damping: 0.62, wake: 0.6,
+      ball: false, ballRadius: 1.3
+    },
+    plate: {
+      width: 42, depth: 42,
+      mode: 'flat',
+      amplitude: 1.7, frequency: 0.055, octaves: 4,
+      pattern: 'checker',
+      baseColor: '#3b4034', secColor: '#2b3026',
+      checkerScale: 2.5,
+      roughness: 0.85,
+      grid: true, gridSpacing: 2, gridOpacity: 0.22
+    },
+    env: {
+      timeOfDay: 15.4,
+      exposure: 1.05,
+      fogDensity: 0.003,
+      fogAuto: true,
+      fogColor: '#8fa4b2',
+      shadows: true,
+      shadowStrength: 0.55,
+      sky: true
+    },
+    scene: { autosave: true }
+  };
+}
+
+var state = defaultState();
+
+/* --------------------------------------------------------------------------
+   Tiny path helpers so UI controls can bind to "grass.height" etc.
+   -------------------------------------------------------------------------- */
+function getPath(obj, path) {
+  var p = path.split('.'), o = obj;
+  for (var i = 0; i < p.length; i++) o = o[p[i]];
+  return o;
+}
+function setPath(obj, path, v) {
+  var p = path.split('.'), o = obj;
+  for (var i = 0; i < p.length - 1; i++) o = o[p[i]];
+  o[p[p.length - 1]] = v;
+}
+function deepMerge(dst, src) {
+  for (var k in src) {
+    if (!Object.prototype.hasOwnProperty.call(src, k)) continue;
+    if (src[k] && typeof src[k] === 'object' && !Array.isArray(src[k]) &&
+        dst[k] && typeof dst[k] === 'object') deepMerge(dst[k], src[k]);
+    else if (dst[k] !== undefined) dst[k] = src[k];
+  }
+  return dst;
+}
+
+/* ==========================================================================
+   2. MATH
+   ========================================================================== */
+
+var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
+var lerp  = function (a, b, t) { return a + (b - a) * t; };
+var smoothstep = function (e0, e1, x) {
+  var t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t);
+};
+var TAU = Math.PI * 2;
+var DEG = Math.PI / 180;
+
+/* Deterministic 32-bit PRNG (mulberry32) — used so a "fill" is reproducible
+   within a session and so noise seeds stay stable. */
+function rng(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+var rnd = Math.random;
+
+/* ---- 2D simplex noise (CPU side, drives the terrain heightfield) --------- */
+var SN = (function () {
+  var grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+  var perm = new Uint8Array(512), pm = new Uint8Array(512);
+  var r = rng(1337), p = new Uint8Array(256);
+  for (var i = 0; i < 256; i++) p[i] = i;
+  for (var i2 = 255; i2 > 0; i2--) {
+    var j = (r() * (i2 + 1)) | 0, t = p[i2]; p[i2] = p[j]; p[j] = t;
+  }
+  for (var k = 0; k < 512; k++) { perm[k] = p[k & 255]; pm[k] = perm[k] % 8; }
+
+  var F2 = 0.5 * (Math.sqrt(3) - 1), G2 = (3 - Math.sqrt(3)) / 6;
+
+  function noise(xin, yin) {
+    var s = (xin + yin) * F2;
+    var i = Math.floor(xin + s), j = Math.floor(yin + s);
+    var t = (i + j) * G2;
+    var x0 = xin - (i - t), y0 = yin - (j - t);
+    var i1, j1;
+    if (x0 > y0) { i1 = 1; j1 = 0; } else { i1 = 0; j1 = 1; }
+    var x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+    var x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+    var ii = i & 255, jj = j & 255, n = 0, g, tt;
+
+    tt = 0.5 - x0 * x0 - y0 * y0;
+    if (tt > 0) { g = grad[pm[ii + perm[jj]]]; tt *= tt; n += tt * tt * (g[0] * x0 + g[1] * y0); }
+    tt = 0.5 - x1 * x1 - y1 * y1;
+    if (tt > 0) { g = grad[pm[ii + i1 + perm[jj + j1]]]; tt *= tt; n += tt * tt * (g[0] * x1 + g[1] * y1); }
+    tt = 0.5 - x2 * x2 - y2 * y2;
+    if (tt > 0) { g = grad[pm[ii + 1 + perm[jj + 1]]]; tt *= tt; n += tt * tt * (g[0] * x2 + g[1] * y2); }
+    return 70 * n;
+  }
+  function fbm(x, y, oct) {
+    var a = 0.5, f = 1, sum = 0, norm = 0;
+    for (var o = 0; o < oct; o++) { sum += a * noise(x * f, y * f); norm += a; a *= 0.5; f *= 2.03; }
+    return sum / norm;
+  }
+  return { noise: noise, fbm: fbm };
+})();
+
+/* ---- colour helpers ------------------------------------------------------ */
+function hex2rgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var n = parseInt(h, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+function rgb2hex(r, g, b) {
+  var f = function (v) { var s = Math.round(clamp(v, 0, 1) * 255).toString(16); return s.length < 2 ? '0' + s : s; };
+  return '#' + f(r) + f(g) + f(b);
+}
+function s2l(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+/* sRGB hex -> linear vec3, because every shader works in linear light. */
+function hexLin(h, out) {
+  var c = hex2rgb(h);
+  out = out || new THREE.Vector3();
+  return out.set(s2l(c[0]), s2l(c[1]), s2l(c[2]));
+}
+function mixArr(a, b, t) {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+
+/* ---- misc ---------------------------------------------------------------- */
+function fmtInt(n) { return n.toLocaleString('en-US'); }
+function nowMs() { return (performance && performance.now) ? performance.now() : Date.now(); }

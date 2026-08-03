@@ -1,0 +1,760 @@
+/* ==========================================================================
+   26. STATIONS, THE RAIL, AND PANEL COMPOSITION
+   --------------------------------------------------------------------------
+   Four stations. Everything you add to the world — houses, trees, people,
+   cars, saved groups — is placed from the one Place station, out of one
+   library, so there is nothing to learn about which station holds what.
+   Anything that belongs to the world rather than to a station (light, water,
+   ground colour, quality, layers, the camera) lives in the World sheet.
+   ========================================================================== */
+var MODES = [
+  { id: 'terrain', label: 'Terrain', key: '1',
+    lede: 'Drag on the ground to push it up. Hold <b>Alt</b> to dig down.',
+    tip: 'Shape the ground — hills, valleys, cliffs and flat building plots.' },
+  { id: 'grass', label: 'Grass', key: '2',
+    lede: 'Drag to plant grass. Hold <b>Alt</b> to rub it out.',
+    tip: 'Plant grass and set how it looks and how it moves in the wind.' },
+  { id: 'place', label: 'Place', key: '3',
+    lede: 'Pick a model, then click on the ground to put one down.',
+    tip: 'Put anything into the world — houses, trees, people, cars.' },
+  { id: 'select', label: 'Select', key: '4',
+    lede: 'Click something to pick it up. Drag on empty ground to lasso several.',
+    tip: 'Pick things you already placed, then move, turn, resize or delete them.' }
+];
+
+var MODE_TOOLS = {
+  terrain: [
+    { id: 'raise', label: 'Raise', icon: ICON.raise, tip: 'Pull the ground up. Hold it still to grow a peak; Alt digs down.' },
+    { id: 'lower', label: 'Lower', icon: ICON.lower, tip: 'Push the ground down for valleys and lake beds.' },
+    { id: 'smooth', label: 'Smooth', icon: ICON.smooth, tip: 'Soften whatever is under the brush.' },
+    { id: 'flatten', label: 'Flat', icon: ICON.flatten, tip: 'Level the ground to the height where you started the drag — good for building plots.' }
+  ],
+  grass: [
+    { id: 'paint', label: 'Paint', icon: ICON.brush, tip: 'Plant grass. Alt rubs it out.' },
+    { id: 'erase', label: 'Erase', icon: ICON.eraser, tip: 'Rub grass out.' },
+    { id: 'smooth', label: 'Even out', icon: ICON.smooth, tip: 'Make thick and thin patches match.' }
+  ],
+  place: [
+    { id: 'place_one', label: 'One', icon: ICON.place, tip: 'Click to put down a single model. Press R to turn it.' },
+    { id: 'place_many', label: 'Scatter', icon: ICON.scatter, tip: 'Drag to sprinkle lots of them. Alt removes instead.' },
+    { id: 'place_erase', label: 'Remove', icon: ICON.eraser, tip: 'Drag to take away whatever is under the brush.' }
+  ],
+  select: [
+    { id: 'select', label: 'Select', icon: ICON.arrow, tip: 'Click to pick, Shift-click to add, drag on empty ground to lasso.' }
+  ]
+};
+
+/* Brushes you reach for less often. Same tool row, one panel deeper. */
+var EXTRA_TOOLS = {
+  terrain: [
+    { id: 'ramp', label: 'Ramp', icon: ICON.ramp, tip: 'Drag from A to B for a clean, even slope between the two heights.' },
+    { id: 'noise', label: 'Roughen', icon: ICON.noise, tip: 'Add rocky bumpiness.' },
+    { id: 'erode', label: 'Erode', icon: ICON.erode, tip: 'Let material slide downhill and settle, the way weather does it.' }
+  ],
+  grass: [
+    { id: 'eyedropper', label: 'Copy look', icon: ICON.dropper, tip: 'Take the settings from the grass under the cursor.' }
+  ],
+  place: [],
+  select: []
+};
+
+var MODE_HINTS = {
+  terrain: '<kbd>Drag</kbd> shape it · <kbd>Alt</kbd> the other way · <kbd>[</kbd><kbd>]</kbd> brush size',
+  grass:   '<kbd>Drag</kbd> plant · <kbd>Alt</kbd> rub out · <kbd>[</kbd><kbd>]</kbd> brush size',
+  place:   '<kbd>Click</kbd> place · <kbd>Drag</kbd> scatter · <kbd>R</kbd> turn it',
+  select:  '<kbd>Click</kbd> pick · <kbd>Shift</kbd> add · <kbd>Drag</kbd> lasso · <kbd>Del</kbd> remove'
+};
+var FLY_HINT = ' · <kbd>WASD</kbd> fly · <kbd>Right-drag</kbd> look';
+
+/* Modes that no longer exist map onto the one that replaced them, so a scene
+   saved before this redesign still opens somewhere sensible. */
+var LEGACY_MODES = { build: 'place', nature: 'place', people: 'place', roads: 'terrain' };
+function normalizeMode(id) {
+  if (LEGACY_MODES[id]) return LEGACY_MODES[id];
+  for (var i = 0; i < MODES.length; i++) if (MODES[i].id === id) return id;
+  return 'terrain';
+}
+function modeDef(id) {
+  for (var i = 0; i < MODES.length; i++) if (MODES[i].id === id) return MODES[i];
+  return MODES[0];
+}
+function allTools(mode) { return (MODE_TOOLS[mode] || []).concat(EXTRA_TOOLS[mode] || []); }
+function modeHasTool(mode, id) {
+  var list = allTools(mode);
+  for (var i = 0; i < list.length; i++) if (list[i].id === id) return true;
+  return false;
+}
+
+/* ---- mode / tool plumbing ------------------------------------------------- */
+function currentTool() {
+  if (state.world.mode === 'terrain') return state.sculpt.mode;
+  return state.tool;
+}
+function setTool(id) {
+  // Loading a scene saved before the redesign restores a mode and a tool that
+  // no longer exist ("nature" / "nat_scatter"), and the base loader calls this
+  // before anything else has had a chance to migrate them.
+  var mode = state.world.mode = normalizeMode(state.world.mode);
+  if (mode === 'terrain') {
+    if (modeHasTool('terrain', id)) state.sculpt.mode = id;
+    else if (!modeHasTool('terrain', state.sculpt.mode)) state.sculpt.mode = 'raise';
+    state.tool = 'sculpt';
+    if (state.plate.mode !== 'terrain') {
+      state.plate.mode = 'terrain';
+      rebuildPlate();
+    }
+  } else {
+    state.tool = modeHasTool(mode, id) ? id : MODE_TOOLS[mode][0].id;
+  }
+  if (state.tool !== 'select') clearSelection();
+  cancelPending();
+  refreshToolButtons();
+  refreshHint();
+  canvas.classList.toggle('cam', false);
+  markSceneDirty();
+}
+function setMode(id) {
+  id = normalizeMode(id);
+  if (state.world.mode === id) return;
+  state.world.mode = id;
+  cancelPending();
+  if (id !== 'select') clearSelection();
+  if (id === 'terrain') {
+    state.tool = 'sculpt';
+    if (!modeHasTool('terrain', state.sculpt.mode)) state.sculpt.mode = 'raise';
+    if (state.plate.mode !== 'terrain') { state.plate.mode = 'terrain'; rebuildPlate(); }
+  } else {
+    state.tool = MODE_TOOLS[id][0].id;
+  }
+  buildRail();
+  buildPanel();
+  refreshHint();
+  markSceneDirty();
+}
+function refreshToolButtons() {
+  var cur = currentTool();
+  var btns = document.querySelectorAll('#panel .tbtn');
+  for (var i = 0; i < btns.length; i++)
+    btns[i].setAttribute('aria-pressed', btns[i].getAttribute('data-tool') === cur ? 'true' : 'false');
+}
+function refreshHint() {
+  var h = document.getElementById('hint');
+  if (!h) return;
+  var extra = '';
+  if (Keys.alt) extra = ' · <b style="color:var(--accent)">Alt: the other way</b>';
+  else if (Keys.shift) extra = ' · <b style="color:var(--accent)">Shift: straight line / add</b>';
+  else if (Keys.space) extra = ' · <b style="color:var(--accent)">Space: orbit</b>';
+  h.innerHTML = (MODE_HINTS[state.world.mode] || '') + FLY_HINT + extra;
+}
+
+/* F frames whatever is selected, falling back to the whole world. */
+function focusSelection() {
+  if (Sel.road) {
+    var sp = roadSamples(Sel.road);
+    if (sp.length) {
+      var mid = sp[(sp.length / 2) | 0];
+      cam.focusOn(mid.x, mid.y, mid.z, Math.max(Sel.road.width * 2, 12));
+      return;
+    }
+  }
+  if (Sel.objs.length) {
+    var mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
+    for (var i = 0; i < Sel.objs.length; i++) {
+      var o = Sel.objs[i], rr = o.radius * o.scale, hh = o.height * o.scale;
+      mnx = Math.min(mnx, o.x - rr); mxx = Math.max(mxx, o.x + rr);
+      mnz = Math.min(mnz, o.z - rr); mxz = Math.max(mxz, o.z + rr);
+      mny = Math.min(mny, o.y); mxy = Math.max(mxy, o.y + hh);
+    }
+    var dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
+    cam.focusOn((mnx + mxx) / 2, (mny + mxy) / 2, (mnz + mxz) / 2, Math.max(dx, dy, dz) * 0.6 + 1);
+    return;
+  }
+  cam.frame(state.plate.width, state.plate.depth, Terrain.max);
+}
+function frameWorld() { cam.frame(state.plate.width, state.plate.depth, Terrain.max); }
+
+/* ==========================================================================
+   THE RAIL
+   ========================================================================== */
+var _railIntroDone = false;
+function buildRail() {
+  var rail = document.getElementById('rail');
+  rail.innerHTML = '';
+  // The strata draw themselves in once, on the first rail of the session.
+  if (!_railIntroDone) {
+    _railIntroDone = true;
+    rail.classList.add('intro');
+    setTimeout(function () { rail.classList.remove('intro'); }, 1000);
+  }
+  MODES.forEach(function (m) {
+    var b = el('button', 'station');
+    b.innerHTML = stationGlyph(STATION_FORM[m.id]) + '<span>' + m.label + '</span>';
+    b.setAttribute('aria-pressed', state.world.mode === m.id ? 'true' : 'false');
+    b.setAttribute('data-tip', m.tip);
+    b.setAttribute('data-key', m.key);
+    b.onclick = function () { setMode(m.id); };
+    rail.appendChild(b);
+  });
+  var foot = el('div');
+  foot.id = 'rail-foot';
+  var fit = el('button', 'btn icon ghost');
+  fit.innerHTML = svgIcon(ICON.frame);
+  fit.setAttribute('data-tip', 'Pull back until the whole world fits on screen');
+  fit.setAttribute('data-key', 'F');
+  fit.onclick = frameWorld;
+  foot.appendChild(fit);
+  rail.appendChild(foot);
+}
+
+/* ==========================================================================
+   SHARED PANEL BLOCKS
+   ========================================================================== */
+function toolRow(host, mode, list) {
+  list = list || MODE_TOOLS[mode];
+  if (!list.length) return;
+  var g = el('div', 'tools');
+  g.style.gridTemplateColumns = 'repeat(' + list.length + ',minmax(0,1fr))';
+  list.forEach(function (t) {
+    var b = el('button', 'tbtn');
+    b.innerHTML = svgIcon(t.icon) + '<span>' + t.label + '</span>';
+    b.setAttribute('data-tool', t.id);
+    b.setAttribute('data-tip', t.tip);
+    b.onclick = function () { setTool(t.id); };
+    g.appendChild(b);
+  });
+  host.appendChild(g);
+  refreshToolButtons();
+}
+
+/* ==========================================================================
+   TERRAIN
+   ========================================================================== */
+function panelTerrain(main, more) {
+  toolRow(main, 'terrain');
+
+  var b = addGroup(main, 'Brush');
+  addSlider(b, { label: 'Brush size', path: 'brush.radius', min: 0.25, max: 40, step: 0.05, dec: 1, unit: ' m',
+    tip: 'How wide a patch each drag affects.', key: '[  ]' });
+  addSlider(b, { label: 'Strength', path: 'sculpt.strength', min: 0.02, max: 2, step: 0.01, dec: 2,
+    tip: 'How fast the ground moves. Holding still in one spot keeps building.' });
+
+  b = addGroup(main, 'Shape of the land');
+  addChips(b, { path: 'plate.landform', apply: ['plate'],
+    options: [
+      { value: 'flat', label: 'Flat' }, { value: 'rolling', label: 'Hills' },
+      { value: 'mountains', label: 'Mountains' }, { value: 'valley', label: 'Valley' },
+      { value: 'island', label: 'Island' }, { value: 'plateau', label: 'Plateau' },
+      { value: 'canyon', label: 'Canyon' }
+    ] });
+  addSlider(b, { label: 'How tall', path: 'plate.heightScale', min: 0, max: 4, step: 0.01, dec: 2,
+    tip: 'Stretches the whole landform up or squashes it flat.', apply: ['plate'] });
+  addButtons(b, [{ label: 'Roll a new one', icon: ICON.wand,
+    tip: 'Same kind of landscape, different shape. Anything you sculpted by hand is cleared.',
+    run: function () { regenerateTerrain(Math.floor(rnd() * 999999) + 1); refreshUI(); } }]);
+
+  /* ---------------- all settings ---------------- */
+  var m = addGroup(more, 'More brushes');
+  toolRow(m, 'terrain', EXTRA_TOOLS.terrain);
+  addSlider(m, { label: 'Edge softness', path: 'brush.falloff', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: '0 fades out gradually, 1 is a crisp circular edge.' });
+  addSlider(m, { label: 'Roughen size', path: 'sculpt.noiseScale', min: 0.05, max: 4, step: 0.01, dec: 2, unit: ' m',
+    tip: 'How big the bumps the Roughen brush makes are.' });
+  addSlider(m, { label: 'Slide angle', path: 'sculpt.talus', min: 0.1, max: 2, step: 0.01, dec: 2,
+    tip: 'How steep a slope Erode leaves standing before material slides off it.' });
+  addSlider(m, { label: 'Erode passes', path: 'sculpt.erodeIters', min: 1, max: 6, step: 1, dec: 0,
+    tip: 'More passes cut deeper gullies.' });
+
+  m = addGroup(more, 'The landform');
+  addSlider(m, { label: 'Seed', path: 'plate.seed', min: 1, max: 999999, step: 1, dec: 0,
+    tip: 'Changes the shape without changing its character.', apply: ['plate'] });
+  addSlider(m, { label: 'Bumpiness', path: 'plate.amplitude', min: 0, max: 24, step: 0.05, dec: 2, unit: ' m',
+    tip: 'How far the land rises and falls before "How tall" scales it.', apply: ['plate'] });
+  addSlider(m, { label: 'Feature size', path: 'plate.frequency', min: 0.004, max: 0.3, step: 0.001, dec: 3,
+    tip: 'Low values give broad landforms, high values give lots of small ones.', apply: ['plate'] });
+  addSlider(m, { label: 'Layers of detail', path: 'plate.octaves', min: 1, max: 6, step: 1, dec: 0,
+    tip: 'More layers add finer detail on top of the big shapes.', apply: ['plate'] });
+  addSelect(m, { label: 'Ground detail', path: 'plate.resolution', apply: ['plate'],
+    tip: 'A finer grid sculpts smaller detail and costs more to draw.',
+    options: [{ value: '64', label: 'Coarse — fastest' }, { value: '128', label: 'Medium' },
+              { value: '256', label: 'Fine' }, { value: '512', label: 'Very fine — heavy' }],
+    onChange: function (v) { state.plate.resolution = parseInt(v, 10); rebuildPlate(); rebuildWater(); } });
+  addSlider(m, { label: 'World width', path: 'plate.width', min: 20, max: 400, step: 1, dec: 0, unit: ' m',
+    tip: 'How far the ground stretches east to west.', apply: ['plate'] });
+  addSlider(m, { label: 'World depth', path: 'plate.depth', min: 20, max: 400, step: 1, dec: 0, unit: ' m',
+    tip: 'How far the ground stretches north to south.', apply: ['plate'] });
+}
+
+/* ==========================================================================
+   PLACE — one station, one library
+   ========================================================================== */
+var PlaceCat = 'all';
+var PLACE_CATS = [
+  { id: 'all', label: 'All' },
+  { id: 'building', label: 'Buildings' },
+  { id: 'nature', label: 'Trees & plants' },
+  { id: 'prop', label: 'Props' },
+  { id: 'person', label: 'People' },
+  { id: 'vehicle', label: 'Vehicles' }
+];
+
+function placeSelect(kind, add) {
+  var list = state.place.kinds;
+  if (add) {
+    var i = list.indexOf(kind);
+    if (i >= 0) { if (list.length > 1) list.splice(i, 1); }
+    else list.push(kind);
+  } else {
+    state.place.kinds = [kind];
+  }
+  state.place.kind = kind;
+  markSceneDirty();
+  buildPanel();
+}
+
+function modelPicker(host) {
+  var ids = Object.keys(ASSETS);
+  var counts = {};
+  ids.forEach(function (id) { counts[ASSETS[id].kind] = (counts[ASSETS[id].kind] || 0) + 1; });
+
+  var g = addGroup(host, 'Models');
+
+  var live = PLACE_CATS.filter(function (c) { return c.id === 'all' || counts[c.id]; });
+  if (!live.some(function (c) { return c.id === PlaceCat; })) PlaceCat = 'all';
+  if (live.length > 2) {
+    addChips(g, {
+      get: function () { return PlaceCat; },
+      set: function (v) { PlaceCat = v; },
+      options: live.map(function (c) { return { value: c.id, label: c.label }; }),
+      onChange: function () { buildPanel(); }
+    });
+  }
+
+  var grid = el('div', 'mgrid');
+  g.appendChild(grid);
+
+  var add = el('button', 'mcard add');
+  var ph = el('div', 'ph');
+  ph.innerHTML = svgIcon(ICON.plus, 2.4);
+  add.appendChild(ph);
+  add.appendChild(el('b', null, 'Add models'));
+  add.setAttribute('data-tip', 'Search Sketchfab and bring a model into your library');
+  add.onclick = function () { showSketchfabBrowser(Browser.q); };
+  grid.appendChild(add);
+
+  var shown = ids.filter(function (id) { return PlaceCat === 'all' || ASSETS[id].kind === PlaceCat; });
+  shown.sort(function (a, c) { return ASSETS[a].label.localeCompare(ASSETS[c].label); });
+
+  if (!ids.length) {
+    var e = el('div', 'empty');
+    e.textContent = 'Nothing to place yet. Everything in this world comes from Sketchfab — press Add models to bring one in.';
+    grid.appendChild(e);
+    return;
+  }
+
+  shown.forEach(function (id) {
+    modelCard(grid, ASSETS[id].label, 'asset', id,
+      state.place.kinds.indexOf(id) >= 0,
+      function (e) { placeSelect(id, e.shiftKey); });
+  });
+
+  World.prefabs.forEach(function (pf) {
+    if (PlaceCat !== 'all') return;
+    modelCard(grid, pf.name, 'group', pf.id, state.place.kind === pf.id,
+      function () { placeSelect(pf.id, false); });
+  });
+
+  addNote(g, 'Click a model to choose it. <b>Shift-click</b> to mix several together when you scatter.');
+}
+
+function modelCard(grid, label, type, key, selected, onClick) {
+  var b = el('button', 'mcard');
+  b.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  b.setAttribute('data-tip', label);
+  var cv = el('canvas');
+  b.appendChild(cv);
+  b.appendChild(el('b', null, label));
+  var tick = el('span', 'tick');
+  tick.innerHTML = svgIcon(ICON.check, 3);
+  b.appendChild(tick);
+  b.onclick = onClick;
+  grid.appendChild(b);
+
+  var ck = type + '|' + key;
+  if (Thumbs.cache[ck]) {
+    cv.width = 128; cv.height = 128;
+    cv.getContext('2d').drawImage(Thumbs.cache[ck], 0, 0);
+  } else {
+    if (type === 'asset') { try { renderThumb(key, cv); } catch (e) {} }
+    else drawGroupSwatch(cv);
+    var store = document.createElement('canvas');
+    store.width = cv.width || 128; store.height = cv.height || 128;
+    store.getContext('2d').drawImage(cv, 0, 0);
+    Thumbs.cache[ck] = store;
+  }
+}
+
+function panelPlace(main, more) {
+  toolRow(main, 'place');
+  modelPicker(main);
+
+  var b = addGroup(main, 'How it goes down');
+  addSegment(b, { path: 'build.snap', tip: 'Where a click actually puts the model.',
+    options: [
+      { value: 'free', label: 'Anywhere', tip: 'Exactly where you click' },
+      { value: 'grid', label: 'On a grid', tip: 'Snapped to a regular grid' },
+      { value: 'road', label: 'Facing a road', tip: 'Set back from the nearest road and turned to face it' }
+    ] });
+  addSlider(b, { label: 'Size', path: 'place.size', min: 0.1, max: 6, step: 0.01, dec: 2, unit: '×',
+    tip: 'How big each copy is placed. 1 is the model at its own size.' });
+  addSlider(b, { label: 'Brush size', path: 'brush.radius', min: 1, max: 40, step: 0.25, dec: 1, unit: ' m',
+    tip: 'How wide the Scatter and Remove brushes reach.', key: '[  ]' });
+  addSlider(b, { label: 'How many scattered', path: 'nature.density', min: 0.02, max: 3, step: 0.01, dec: 2,
+    tip: 'How thickly the Scatter brush drops models as you drag.' });
+
+  /* ---------------- all settings ---------------- */
+  var m = addGroup(more, 'Variety');
+  addSlider(m, { label: 'Smallest', path: 'nature.scaleMin', min: 0.1, max: 2, step: 0.01, dec: 2,
+    tip: 'Bottom of the random size range.' });
+  addSlider(m, { label: 'Largest', path: 'nature.scaleMax', min: 0.1, max: 4, step: 0.01, dec: 2,
+    tip: 'Top of the random size range.' });
+  addSlider(m, { label: 'Turn each one', path: 'nature.rotJitter', min: 0, max: 180, step: 1, dec: 0, unit: '°',
+    tip: 'Random spin so a group does not look stamped.' });
+  addSlider(m, { label: 'Lean with the slope', path: 'nature.alignNormal', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'How much each model tips over with the ground it stands on.' });
+  addSlider(m, { label: 'Smallest gap', path: 'nature.spacing', min: 0.2, max: 20, step: 0.1, dec: 2, unit: ' m',
+    tip: 'Models never land closer together than this.' });
+
+  m = addGroup(more, 'Buildings');
+  addToggle(m, { label: 'Flatten the ground under it', path: 'build.flatten',
+    tip: 'Level the terrain under a building so it does not float or sink.' });
+  addToggle(m, { label: 'Always stand upright', path: 'build.upright',
+    tip: 'Keep buildings vertical instead of tipping with the ground.' });
+  addSlider(m, { label: 'Grid spacing', path: 'build.gridSize', min: 0.25, max: 20, step: 0.25, dec: 2, unit: ' m',
+    tip: 'How far apart the grid lines are when snapping to a grid.' });
+  addSlider(m, { label: 'Distance from the road', path: 'build.setback', min: 0, max: 30, step: 0.25, dec: 2, unit: ' m',
+    tip: 'How far back from the kerb a road-facing building sits.' });
+  addSlider(m, { label: 'Facing', path: 'build.rotation', min: 0, max: 360, step: 1, dec: 0, unit: '°',
+    tip: 'Which way a building faces when it is not snapped to a road.' });
+  addSlider(m, { label: 'Random facing', path: 'build.rotJitter', min: 0, max: 45, step: 0.5, dec: 1, unit: '°',
+    tip: 'Small random turn so a row of houses is not perfectly aligned.' });
+
+  m = addGroup(more, 'Where things are allowed');
+  addSlider(m, { label: 'Flattest ground needed', path: 'nature.minNormalY', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Refuse steeper ground than this — 1 means flat ground only.' });
+  addSlider(m, { label: 'Not below', path: 'nature.minAlt', min: -60, max: 60, step: 0.5, dec: 1, unit: ' m',
+    tip: 'Only place above this height — pines above the treeline.' });
+  addSlider(m, { label: 'Not above', path: 'nature.maxAlt', min: -60, max: 60, step: 0.5, dec: 1, unit: ' m',
+    tip: 'Only place below this height — palms near the water.' });
+
+  m = addGroup(more, 'What Remove takes');
+  addToggle(m, { label: 'Trees and plants', path: 'eraseMask.nature', tip: 'Include trees, rocks and plants.' });
+  addToggle(m, { label: 'Props', path: 'eraseMask.props', tip: 'Include street furniture and yard props.' });
+  addToggle(m, { label: 'Buildings', path: 'eraseMask.buildings', tip: 'Include buildings.' });
+  addToggle(m, { label: 'People', path: 'eraseMask.people', tip: 'Include people.' });
+  addToggle(m, { label: 'Vehicles', path: 'eraseMask.vehicles', tip: 'Include cars and trucks.' });
+  addToggle(m, { label: 'Grass too', path: 'eraseMask.grass', tip: 'Also rub out grass blades under the brush.' });
+
+  panelLibrary(more);
+}
+
+/* ==========================================================================
+   SELECT
+   ========================================================================== */
+function panelSelect(main, more) {
+  toolRow(main, 'select');
+
+  var b = addGroup(main, 'Selection');
+  UI.selInfo = addNote(b, 'Nothing picked yet');
+  addSegment(b, { path: 'sel.gizmo', tip: 'What the handles on screen do.',
+    options: [{ value: 'move', label: 'Move' }, { value: 'rotate', label: 'Turn' }, { value: 'scale', label: 'Resize' }],
+    onChange: refreshSelectionVisuals });
+  UI.xform = el('div');
+  b.appendChild(UI.xform);
+  addButtons(b, [
+    { label: 'Duplicate', icon: ICON.copy, tip: 'Make a copy, just to one side.', key: 'Ctrl D', run: duplicateSelection },
+    { label: 'Delete', kind: 'dgr', icon: ICON.trash, tip: 'Remove what is picked.', key: 'Del', run: deleteSelection }
+  ]);
+
+  var m = addGroup(more, 'Selection');
+  addSlider(m, { label: 'Arrow-key step', path: 'sel.nudge', min: 0.05, max: 5, step: 0.05, dec: 2, unit: ' m',
+    tip: 'How far the arrow keys shift what is picked.' });
+  addButtons(m, [
+    { label: 'Save as a group', icon: ICON.copy,
+      tip: 'Turn what is picked into one stamp you can place again from the Place station.',
+      run: function () { if (groupSelectionToPrefab()) buildPanel(); } }
+  ]);
+  if (World.prefabs.length) {
+    var g = addGroup(more, 'Your groups');
+    World.prefabs.forEach(function (pf) {
+      addButtons(g, [{ label: pf.name + ' — ' + pf.items.length + ' pieces', icon: ICON.place,
+        tip: 'Switch to Place with this group ready to stamp.',
+        run: function () { state.place.kind = pf.id; state.place.kinds = [pf.id]; setMode('place'); } }]);
+    });
+  }
+  refreshSelectionUI();
+}
+
+/* Numeric transforms, refreshed whenever the selection changes. */
+function refreshSelectionUI() {
+  if (!UI.xform || !UI.selInfo || !UI.selInfo.isConnected) return;
+  var n = Sel.objs.length;
+  UI.selInfo.textContent = Sel.road ? ('A road is picked — ' + Sel.road.pts.length + ' points')
+    : (n === 0 ? 'Nothing picked yet'
+      : (n === 1 ? ((ASSETS[Sel.objs[0].kind] || {}).label || 'One thing') + ' is picked'
+        : (n + ' things are picked')));
+  UI.xform.innerHTML = '';
+  if (Sel.road && !n) {
+    addButtons(UI.xform, [{ label: 'Delete this road', kind: 'dgr', icon: ICON.trash,
+      tip: 'Remove the road and anything placed along it.',
+      run: function () { deleteRoad(Sel.road); clearSelection(); buildPanel(); } }]);
+    refreshSelectionVisuals();
+    return;
+  }
+  if (n === 0) { refreshSelectionVisuals(); return; }
+  var c = selectionCenter();
+  var rows = [
+    ['Pos', [c.x, c.y, c.z], function (i, v) {
+      var d = [0, 0, 0]; d[i] = v - [c.x, c.y, c.z][i];
+      moveSelection(d[0], d[1], d[2]);
+    }],
+    ['Turn', [0, Sel.objs[0].rotY / DEG, 0], function (i, v) {
+      if (i !== 1) return;
+      rotateSelection(v * DEG - Sel.objs[0].rotY);
+    }],
+    ['Size', [Sel.objs[0].scale, Sel.objs[0].scale, Sel.objs[0].scale], function (i, v) {
+      scaleSelection(v / Math.max(Sel.objs[0].scale, 1e-4));
+    }]
+  ];
+  rows.forEach(function (r) {
+    var g = el('div', 'xform');
+    g.appendChild(el('i', null, r[0].charAt(0)));
+    for (var i = 0; i < 3; i++) (function (idx) {
+      var inp = el('input');
+      inp.type = 'text';
+      inp.value = r[1][idx].toFixed(2);
+      inp.setAttribute('data-tip', r[0] === 'Pos' ? 'Position' : (r[0] === 'Turn' ? 'Turn, in degrees (up-down axis only)' : 'Size'));
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') inp.blur(); e.stopPropagation(); });
+      inp.addEventListener('blur', function () {
+        var v = parseFloat(inp.value);
+        if (isFinite(v)) { var before = snapshotSelection(); r[2](idx, v); commitSelectionChange(before, 'Transform'); }
+        refreshSelectionUI();
+      });
+      g.appendChild(inp);
+    })(i);
+    UI.xform.appendChild(g);
+  });
+  refreshSelectionVisuals();
+}
+
+/* ==========================================================================
+   THE WORLD SHEET — everything that belongs to the world rather than to a
+   station. One deliberate trip here instead of twenty-five controls sitting
+   under every mode forever.
+   ========================================================================== */
+function showWorldSheet() {
+  openModal('World', function (body) {
+    var sheet = el('div', 'sheet');
+    var L = el('div'), R = el('div');
+    sheet.appendChild(L); sheet.appendChild(R);
+    body.appendChild(sheet);
+
+    /* ---- light ---- */
+    var b = addGroup(L, 'Light');
+    addSlider(b, { label: 'Time of day', path: 'env.timeOfDay', min: 0, max: 24, step: 0.05, dec: 2,
+      format: function (v) { return clockLabel(v); }, apply: ['env'],
+      tip: 'Moves the sun. Everything else — sky, shadows, the glow through the blades — follows it.',
+      onChange: refreshTopExtras });
+    addSlider(b, { label: 'Brightness', path: 'env.exposure', min: 0.2, max: 3, step: 0.01, dec: 2,
+      tip: 'Overall exposure of the picture.', apply: ['env'] });
+    addToggle(b, { label: 'Draw the sky', path: 'env.sky', apply: ['env'],
+      tip: 'Off gives a flat background in the haze colour.' });
+    addSlider(b, { label: 'Haze', path: 'env.fogDensity', min: 0, max: 0.06, step: 0.0002, dec: 4,
+      tip: 'Distance fog. Small numbers already reach a long way across a big world.', apply: ['env'] });
+    addToggle(b, { label: 'Haze matches the sky', path: 'env.fogAuto', apply: ['env'],
+      tip: 'Take the haze colour from the sky instead of choosing it yourself.' });
+    addColor(b, { label: 'Haze colour', path: 'env.fogColor', apply: ['env'],
+      tip: 'Used when the haze does not follow the sky.' });
+    addToggle(b, { label: 'Shadows under the grass', path: 'env.shadows', apply: ['env'],
+      tip: 'Darken the ground beneath thick grass.' });
+    addSlider(b, { label: 'Shadow strength', path: 'env.shadowStrength', min: 0, max: 1, step: 0.01, dec: 2,
+      tip: 'How dark those shadows get.', apply: ['env'] });
+
+    /* ---- ground ---- */
+    b = addGroup(L, 'Ground');
+    addToggle(b, { label: 'Colour it by steepness', path: 'plate.autoTex', apply: ['ground'],
+      tip: 'Blend grass, dirt, rock and snow automatically by how steep and how high the ground is.' });
+    addColor(b, { label: 'Flat ground', path: 'plate.grassColor', apply: ['ground'], tip: 'Colour where the ground is level.' });
+    addColor(b, { label: 'Gentle slopes', path: 'plate.dirtColor', apply: ['ground'], tip: 'Colour on mild slopes.' });
+    addColor(b, { label: 'Cliffs', path: 'plate.rockColor', apply: ['ground'], tip: 'Colour on steep faces.' });
+    addSlider(b, { label: 'How steep counts as cliff', path: 'plate.rockSlope', min: 0.2, max: 0.99, step: 0.01, dec: 2,
+      tip: 'Lower means only the very steepest faces turn to rock.', apply: ['ground'] });
+    addSlider(b, { label: 'Cliff blend', path: 'plate.rockBlend', min: 0.01, max: 0.5, step: 0.01, dec: 2,
+      tip: 'How softly grass fades into rock.', apply: ['ground'] });
+    addToggle(b, { label: 'Snow on the tops', path: 'plate.snowOn', apply: ['ground'], tip: 'Cap high ground with snow.' });
+    addColor(b, { label: 'Snow colour', path: 'plate.snowColor', apply: ['ground'], tip: 'Colour of the snow.' });
+    addSlider(b, { label: 'Snow line', path: 'plate.snowline', min: -10, max: 60, step: 0.1, dec: 1, unit: ' m',
+      tip: 'The height snow starts settling at.', apply: ['ground'] });
+    addSlider(b, { label: 'Snow blend', path: 'plate.snowBlend', min: 0.1, max: 12, step: 0.1, dec: 1,
+      tip: 'How gradually the snow line fades in.', apply: ['ground'] });
+    addSelect(b, { label: 'Plain pattern instead', path: 'plate.pattern', apply: ['ground'],
+      tip: 'A plain pattern for the ground.',
+      options: [{ value: 'solid', label: 'Plain' }, { value: 'checker', label: 'Checker' },
+                { value: 'radial', label: 'Fading circle' }, { value: 'noise', label: 'Patchy dirt' }] });
+    addColor(b, { label: 'Pattern colour', path: 'plate.baseColor', apply: ['ground'], tip: 'Main colour of that pattern.' });
+    addColor(b, { label: 'Second colour', path: 'plate.secColor', apply: ['ground'], tip: 'The other colour in that pattern.' });
+    addToggle(b, { label: 'Measuring grid', path: 'plate.grid', apply: ['ground'], key: 'G',
+      tip: 'Lines on the ground so you can judge distance.' });
+    addSlider(b, { label: 'Grid spacing', path: 'plate.gridSpacing', min: 0.25, max: 20, step: 0.05, dec: 2, unit: ' m',
+      tip: 'Distance between grid lines.', apply: ['ground'] });
+
+    /* ---- water ---- */
+    b = addGroup(L, 'Water');
+    addToggle(b, { label: 'Flood the low ground', path: 'plate.water',
+      tip: 'Fill everything below the water line.', onChange: function () { rebuildWater(); } });
+    addSlider(b, { label: 'Water level', path: 'plate.waterLevel', min: -30, max: 30, step: 0.05, dec: 2, unit: ' m',
+      tip: 'How high the water sits.', onChange: function () { rebuildWater(); } });
+    addColor(b, { label: 'Near the shore', path: 'plate.waterColor', tip: 'Colour in the shallows.', onChange: syncWaterUniforms });
+    addColor(b, { label: 'Out deep', path: 'plate.waterDeep', tip: 'Colour where it is deep.', onChange: syncWaterUniforms });
+    addSlider(b, { label: 'See-through', path: 'plate.waterOpacity', min: 0.1, max: 1, step: 0.01, dec: 2,
+      tip: 'How much of the lake bed shows through.', onChange: syncWaterUniforms });
+    addSlider(b, { label: 'Ripple size', path: 'plate.waveScale', min: 0.05, max: 3, step: 0.01, dec: 2,
+      tip: 'Size of the ripples on the surface.', onChange: syncWaterUniforms });
+    addSlider(b, { label: 'Ripple speed', path: 'plate.waveSpeed', min: 0, max: 3, step: 0.01, dec: 2,
+      tip: 'How fast the ripples travel.', onChange: syncWaterUniforms });
+    addSlider(b, { label: 'Foam at the edge', path: 'plate.foam', min: 0, max: 2, step: 0.01, dec: 2,
+      tip: 'The white band where water meets land.', onChange: syncWaterUniforms });
+
+    /* ---- quality ---- */
+    b = addGroup(R, 'Quality');
+    addSegment(b, { path: 'world.quality',
+      tip: 'Moves draw distance, grass density and the animation budget together.',
+      options: Object.keys(QUALITY).map(function (k) {
+        return { value: k, label: QUALITY[k].label, tip: QUALITY[k].label + ' detail' };
+      }),
+      onChange: function (v) { setQuality(v); } });
+    addToggle(b, { label: 'Keep everything moving', path: 'world.simulate', key: 'P',
+      tip: 'Turn off to freeze the wind, water, people and traffic for a clean screenshot.',
+      onChange: function () { syncEnvUniforms(); } });
+    var ro = el('div', 'readout');
+    ro.innerHTML =
+      '<div><i>Frames</i><b id="w-fps">—</b></div>' +
+      '<div><i>Blades</i><b id="w-blades">0</b></div>' +
+      '<div><i>Objects</i><b id="w-objs">0</b></div>' +
+      '<div><i>Triangles</i><b id="w-tris">0</b></div>';
+    b.appendChild(ro);
+
+    /* ---- camera ---- */
+    b = addGroup(R, 'Camera');
+    addNote(b, 'Fly with <b>W A S D</b>, <b>E</b> up and <b>Q</b> down. Hold the right mouse button to look around, ' +
+      'and roll the wheel while looking to change speed. <b>F</b> frames whatever is picked.');
+    addSlider(b, { label: 'Fly speed', path: 'cam.flySpeed', min: 1, max: 400, step: 0.5, dec: 0, unit: ' m/s',
+      tip: 'How fast W A S D moves you.' });
+    addSlider(b, { label: 'Shift speeds it up by', path: 'cam.boost', min: 1, max: 12, step: 0.1, dec: 1, unit: '×',
+      tip: 'Speed multiplier while Shift is held.' });
+    addSlider(b, { label: 'Mouse sensitivity', path: 'cam.lookSens', min: 0.2, max: 3, step: 0.01, dec: 2,
+      tip: 'How far the view turns per pixel of mouse movement.' });
+    addToggle(b, { label: 'Invert up and down', path: 'cam.invertY', tip: 'Flip the vertical direction of looking around.' });
+
+    /* ---- layers ---- */
+    b = addGroup(R, 'Layers');
+    addNote(b, 'Hide a layer to get it out of the way, or lock it so brushes and clicks pass straight through.');
+    buildLayerList(b);
+
+    /* ---- housekeeping ---- */
+    b = addGroup(R, 'This world');
+    addToggle(b, { label: 'Keep a copy in this browser', path: 'scene.autosave',
+      tip: 'Your world comes back automatically when you reload the page.' });
+    addButtons(b, [
+      { label: 'Add people and traffic', icon: ICON.people,
+        tip: 'Fill every road that a template built with a sensible mix of walkers and vehicles.',
+        run: function () {
+          var n = populateWorld(1);
+          toast(n ? ('Added ' + n + ' people and vehicles') : 'Nothing to populate — templates build the roads', n ? 'ok' : null);
+        } }
+    ]);
+    addButtons(b, [
+      { label: 'Remove everything placed', kind: 'dgr', icon: ICON.trash,
+        tip: 'Take out every model you or a template put down. Ground, grass and roads stay.',
+        run: function () {
+          confirmDialog('Remove everything you placed?',
+            'This takes out every building, tree, prop, person and vehicle. The ground, the grass and the roads stay. Ctrl+Z brings it back.',
+            'Remove them', function () {
+              var list = World.objs.slice();
+              if (!list.length) { toast('There is nothing placed'); return; }
+              beginStroke('Clear objects');
+              recordObjDel(list);
+              for (var i = 0; i < list.length; i++) deleteObject(list[i]);
+              endStroke();
+              disposeEmptyLayers();
+              buildPanel();
+              toast('Removed ' + list.length + ' things', 'ok');
+            });
+        } }
+    ]);
+  }, [{ label: 'Done', kind: 'pri' }], { wide: true });
+  refreshWorldReadout();
+}
+
+var _wFps, _wBlades, _wObjs, _wTris;
+function refreshWorldReadout() {
+  _wFps = document.getElementById('w-fps');
+  _wBlades = document.getElementById('w-blades');
+  _wObjs = document.getElementById('w-objs');
+  _wTris = document.getElementById('w-tris');
+}
+function paintWorldReadout(fps) {
+  if (!_wFps || !_wFps.isConnected) return;
+  _wFps.textContent = fps.toFixed(0);
+  _wFps.parentNode.classList.toggle('warn', fps < 40);
+  _wBlades.textContent = fmtInt(Grass.count);
+  _wObjs.textContent = fmtInt(World.objs.length);
+  _wTris.textContent = fmtInt(renderer.info.render.triangles);
+}
+
+/* ==========================================================================
+   PANEL COMPOSITION
+   ========================================================================== */
+function buildPanel() {
+  var host = document.getElementById('panel-body');
+  host.innerHTML = '';
+  UI.controls.length = 0;
+  UI.xform = null; UI.selInfo = null; UI.meter = null;
+
+  var m = state.world.mode = normalizeMode(state.world.mode);
+  var def = modeDef(m);
+  document.getElementById('panel-title').textContent = def.label;
+  document.getElementById('panel-lede').innerHTML = def.lede;
+
+  var main = el('div');
+  host.appendChild(main);
+
+  var more = el('div');
+  more.id = 'more';
+  var btn = el('button');
+  btn.id = 'more-btn';
+  btn.innerHTML = svgIcon('<path d="m9 6 6 6-6 6"/>', 2.2) + '<span>All settings</span>';
+  btn.setAttribute('data-tip', 'Everything else this station can do');
+  var moreBody = el('div');
+  moreBody.id = 'more-body';
+  more.appendChild(btn); more.appendChild(moreBody);
+  host.appendChild(more);
+  btn.onclick = function () {
+    state.ui.moreOpen = !more.classList.contains('open');
+    more.classList.toggle('open', state.ui.moreOpen);
+    markSceneDirty();
+  };
+  if (state.ui.moreOpen) more.classList.add('open');
+
+  if (m === 'terrain') panelTerrain(main, moreBody);
+  else if (m === 'grass') panelGrass(main, moreBody);
+  else if (m === 'place') panelPlace(main, moreBody);
+  else panelSelect(main, moreBody);
+
+  refreshToolButtons();
+}
+
+/* Kept because the library, templates and scene loading all need to redraw
+   the model picker after they change what is in the library. */
+function refreshLibraryUI() {
+  if (state.world.mode === 'place') buildPanel();
+}

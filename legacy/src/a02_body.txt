@@ -1,0 +1,140 @@
+</head>
+<body>
+<div id="app">
+  <!-- ================= TOP BAR ================= -->
+  <header id="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 20h20"/>
+        <path d="M6 20c0-4 1-7 3-9"/><path d="M12 20c0-6.5 1.8-11 4.5-14"/><path d="M18 20c0-3.5-.8-6-2-8"/>
+      </svg>
+      <b>Grass Painter</b>
+    </div>
+    <div class="sep"></div>
+    <button class="btn icon ghost" id="b-undo" data-tip="Undo the last thing you did" data-key="Ctrl Z">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h11a5 5 0 0 1 0 10h-3"/><path d="M7 6 3 10l4 4"/></svg>
+    </button>
+    <button class="btn icon ghost" id="b-redo" data-tip="Redo what you just undid" data-key="Ctrl Shift Z">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10H10a5 5 0 0 0 0 10h3"/><path d="m17 6 4 4-4 4"/></svg>
+    </button>
+
+    <div class="grow"></div>
+
+    <div id="saved"></div>
+    <button id="sun-btn" data-tip="Time of day, water, ground colour, quality and layers — everything that belongs to the whole world">
+      <span class="dot"></span><b>15:24</b>
+    </button>
+    <button class="btn" id="b-new" data-tip="Start again from a ready-made world">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="m3 20 5-8 4 4.5L16 8l5 12"/></svg>
+      <span>New world</span>
+    </button>
+    <button class="btn" id="b-save" data-tip="Download this world as a file you can open again later" data-key="Ctrl S">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11M8 10l4 4 4-4"/><path d="M4 19h16"/></svg>
+      <span>Save</span>
+    </button>
+    <button class="btn icon ghost" id="b-load" data-tip="Open a world you saved earlier" data-key="Ctrl O">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M8 9l4-4 4 4"/><path d="M4 19h16"/></svg>
+    </button>
+    <button class="btn icon ghost" id="b-png" data-tip="Save a picture of what you can see" data-key="Ctrl P">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h2l1.4-2h7.2L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="12" cy="12.5" r="3.4"/></svg>
+    </button>
+    <button class="btn icon ghost" id="b-help" data-tip="Take the tour again, or see every keyboard shortcut" data-key="?">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2A2.5 2.5 0 0 1 14.5 10c0 1.7-2.5 2-2.5 3.6"/><path d="M12 17.2h.01"/></svg>
+    </button>
+  </header>
+
+  <!-- ================= STAGE ================= -->
+  <div id="stage">
+    <canvas id="view"></canvas>
+
+    <!-- the four stations -->
+    <nav id="rail" role="toolbar" aria-label="Stations"></nav>
+
+    <!-- settings panel -->
+    <aside id="panel">
+      <div id="panel-head">
+        <span id="panel-title" class="wide">Terrain</span>
+        <span id="panel-lede"></span>
+      </div>
+      <div id="panel-body"></div>
+    </aside>
+
+    <button id="panel-toggle" data-tip="Hide or show the settings" data-key="Tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+
+    <div id="marquee"></div>
+    <div id="hint"></div>
+  </div>
+</div>
+
+<!-- ================= GUIDED TOUR ================= -->
+<div id="tour" aria-live="polite">
+  <div id="tour-hole"></div>
+  <div id="tour-card"></div>
+</div>
+
+<div id="tip"></div>
+<div id="toasts"></div>
+<input type="file" id="filepick" accept=".json,.grass,application/json" style="display:none" />
+
+<div id="nogl">
+  <div class="in">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>
+    </svg>
+    <h2>This browser can't draw 3D</h2>
+    <p>Grass Painter needs WebGL. Try a recent Chrome, Edge, Firefox or Safari, turn hardware acceleration on in the browser settings, and make sure your graphics driver is up to date.</p>
+  </div>
+</div>
+
+<div id="boot"><div class="in"><div class="bar"><i></i></div><small id="boot-msg">Loading</small></div></div>
+
+<script>
+/* ==========================================================================
+   THREE.js loader — tries several CDNs so the page works standalone.
+   A UMD build is used deliberately: it keeps this a single file that also
+   opens straight from disk (file://), where ES modules are blocked.
+   ========================================================================== */
+(function () {
+  var SOURCES = [
+    'https://unpkg.com/three@0.149.0/build/three.min.js',
+    'https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js',
+    'https://unpkg.com/three@0.147.0/build/three.min.js'
+  ];
+  var i = 0;
+  function next() {
+    if (i >= SOURCES.length) { fail(); return; }
+    var s = document.createElement('script');
+    s.src = SOURCES[i++];
+    s.onload = function () { window.THREE ? start() : next(); };
+    s.onerror = next;
+    document.head.appendChild(s);
+  }
+  function fail() {
+    document.getElementById('boot').style.display = 'none';
+    var el = document.getElementById('nogl');
+    el.querySelector('h2').textContent = 'Could not load the 3D library';
+    el.querySelector('p').textContent =
+      'Three.js could not be downloaded from any CDN. Check your internet connection and reload the page.';
+    el.style.display = 'flex';
+  }
+  function start() {
+    try {
+      var c = document.createElement('canvas');
+      if (!(c.getContext('webgl2') || c.getContext('webgl'))) throw 0;
+    } catch (e) {
+      document.getElementById('boot').style.display = 'none';
+      document.getElementById('nogl').style.display = 'flex';
+      return;
+    }
+    document.getElementById('boot-msg').textContent = 'Building your world';
+    // The main script only DEFINES __GP_MAIN__; nothing touching THREE runs
+    // until it is called here, once the library is guaranteed to be present.
+    window.__GP_MAIN__();
+  }
+  window.__GP_START__ = next;
+})();
+</script>
+<script>

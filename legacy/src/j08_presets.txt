@@ -1,0 +1,408 @@
+/* ==========================================================================
+   11. PRESETS
+   ========================================================================== */
+var PRESETS = [
+  {
+    name: 'Lawn', swatch: '#5f9d33',
+    grass: { height: 0.55, heightVar: 0.22, width: 0.05, widthVar: 0.2, taper: 1.15,
+             curve: 0.34, curveVar: 0.3, segments: 4, bladeCurl: 0.5,
+             baseColor: '#2b5720', tipColor: '#79bd3f', gradPow: 1.6,
+             hueVar: 0.03, satVar: 0.14, valVar: 0.18, density: 1,
+             stiffMin: 0.9, stiffMax: 1.7, ao: 0.6, translucency: 0.75,
+             specular: 0.18, roughness: 0.62 },
+    wind: { strength: 0.28, direction: 40, speed: 0.3, turbulence: 0.4,
+            waveScale: 0.12, gustFreq: 0.22, gustStrength: 0.5, gustSpeed: 1.7 },
+    plate: { pattern: 'checker', baseColor: '#3e4436', secColor: '#333a2c',
+             checkerScale: 2.5, grid: false, gridOpacity: 0.2, roughness: 0.85 },
+    env: { timeOfDay: 14.5, exposure: 1.05, fogDensity: 0.006, fogAuto: true,
+           shadows: true, shadowStrength: 0.5 },
+    brush: { maxDensity: 190, scatter: 0.35, tilt: 0.1 }
+  },
+  {
+    name: 'Wild Meadow', swatch: '#8bbd4e',
+    grass: { height: 1.35, heightVar: 0.55, width: 0.062, widthVar: 0.35, taper: 0.95,
+             curve: 0.72, curveVar: 0.6, segments: 6, bladeCurl: 0.6,
+             baseColor: '#2f5a1d', tipColor: '#a6cf5c', gradPow: 1.4,
+             hueVar: 0.08, satVar: 0.26, valVar: 0.3, density: 1,
+             stiffMin: 0.45, stiffMax: 1.5, ao: 0.66, translucency: 1.15,
+             specular: 0.22, roughness: 0.58 },
+    wind: { strength: 0.62, direction: 62, speed: 0.38, turbulence: 0.78,
+            waveScale: 0.07, gustFreq: 0.16, gustStrength: 0.95, gustSpeed: 1.5 },
+    plate: { pattern: 'noise', baseColor: '#3a3f30', secColor: '#4a4433',
+             checkerScale: 3.2, grid: false, roughness: 0.9 },
+    env: { timeOfDay: 17.6, exposure: 1.1, fogDensity: 0.009, fogAuto: true,
+           shadows: true, shadowStrength: 0.55 },
+    brush: { maxDensity: 120, scatter: 1, tilt: 0.28 }
+  },
+  {
+    name: 'Dry Savanna', swatch: '#c9a957',
+    grass: { height: 1.7, heightVar: 0.6, width: 0.05, widthVar: 0.3, taper: 0.8,
+             curve: 0.95, curveVar: 0.55, segments: 6, bladeCurl: 0.45,
+             baseColor: '#6a5a26', tipColor: '#d8c078', gradPow: 1.15,
+             hueVar: 0.05, satVar: 0.3, valVar: 0.3, density: 0.82,
+             stiffMin: 0.35, stiffMax: 1.1, ao: 0.58, translucency: 1.35,
+             specular: 0.3, roughness: 0.5 },
+    wind: { strength: 0.85, direction: 108, speed: 0.5, turbulence: 0.85,
+            waveScale: 0.055, gustFreq: 0.12, gustStrength: 1.35, gustSpeed: 2.1 },
+    plate: { pattern: 'noise', baseColor: '#6b5a3c', secColor: '#87724a',
+             checkerScale: 4, grid: false, roughness: 0.95 },
+    env: { timeOfDay: 18.4, exposure: 1.15, fogDensity: 0.011, fogAuto: true,
+           shadows: true, shadowStrength: 0.6 },
+    brush: { maxDensity: 85, scatter: 1, tilt: 0.32 }
+  },
+  {
+    name: 'Wheat Field', swatch: '#dcb64e',
+    grass: { height: 2.35, heightVar: 0.24, width: 0.038, widthVar: 0.2, taper: 0.6,
+             curve: 1.15, curveVar: 0.3, segments: 7, bladeCurl: 0.35,
+             baseColor: '#8a7326', tipColor: '#efd583', gradPow: 1.9,
+             hueVar: 0.03, satVar: 0.2, valVar: 0.24, density: 1,
+             stiffMin: 0.7, stiffMax: 1.1, ao: 0.7, translucency: 1.5,
+             specular: 0.4, roughness: 0.42 },
+    wind: { strength: 0.72, direction: 22, speed: 0.26, turbulence: 0.42,
+            waveScale: 0.032, gustFreq: 0.085, gustStrength: 1.5, gustSpeed: 1.15 },
+    plate: { pattern: 'solid', baseColor: '#6d5c33', secColor: '#5a4c2b',
+             grid: false, roughness: 0.92 },
+    env: { timeOfDay: 17.1, exposure: 1.12, fogDensity: 0.008, fogAuto: true,
+           shadows: true, shadowStrength: 0.5 },
+    brush: { maxDensity: 150, scatter: 0.75, tilt: 0.12 }
+  },
+  {
+    name: 'Alien / Neon', swatch: '#3fe0c8',
+    grass: { height: 1.5, heightVar: 0.5, width: 0.085, widthVar: 0.4, taper: 1.5,
+             curve: 0.85, curveVar: 0.7, segments: 7, bladeCurl: 1.1,
+             baseColor: '#0f3a56', tipColor: '#54ffe0', gradPow: 1.1,
+             hueVar: 0.16, satVar: 0.4, valVar: 0.35, density: 0.95,
+             stiffMin: 0.3, stiffMax: 1.8, ao: 0.5, translucency: 2.1,
+             specular: 0.85, roughness: 0.22 },
+    wind: { strength: 0.68, direction: 200, speed: 0.55, turbulence: 1.1,
+            waveScale: 0.11, gustFreq: 0.26, gustStrength: 1.1, gustSpeed: 2.6 },
+    plate: { pattern: 'radial', baseColor: '#121a2c', secColor: '#2a1240',
+             checkerScale: 2, grid: true, gridSpacing: 2, gridOpacity: 0.45, roughness: 0.3 },
+    env: { timeOfDay: 18.35, exposure: 1.9, fogDensity: 0.012, fogAuto: false,
+           fogColor: '#2a1b4a', shadows: true, shadowStrength: 0.4 },
+    brush: { maxDensity: 100, scatter: 1, tilt: 0.35 }
+  },
+  {
+    name: 'Snow-dusted', swatch: '#cfdbe4',
+    grass: { height: 0.8, heightVar: 0.45, width: 0.055, widthVar: 0.3, taper: 1.0,
+             curve: 0.7, curveVar: 0.55, segments: 5, bladeCurl: 0.5,
+             baseColor: '#3f4d3f', tipColor: '#dfe9ef', gradPow: 2.4,
+             hueVar: 0.02, satVar: 0.16, valVar: 0.2, density: 0.9,
+             stiffMin: 0.8, stiffMax: 1.9, ao: 0.7, translucency: 0.55,
+             specular: 0.5, roughness: 0.35 },
+    wind: { strength: 0.3, direction: 300, speed: 0.24, turbulence: 0.5,
+            waveScale: 0.09, gustFreq: 0.2, gustStrength: 0.6, gustSpeed: 1.3 },
+    plate: { pattern: 'noise', baseColor: '#b9c6d0', secColor: '#8e9daa',
+             checkerScale: 3.5, grid: false, roughness: 0.55 },
+    env: { timeOfDay: 9.2, exposure: 0.98, fogDensity: 0.016, fogAuto: false,
+           fogColor: '#b9c7d4', shadows: true, shadowStrength: 0.35 },
+    brush: { maxDensity: 110, scatter: 1, tilt: 0.25 }
+  }
+];
+
+function applyPreset(i) {
+  var p = PRESETS[i];
+  if (!p) return;
+  if (p.grass) deepMerge(state.grass, p.grass);
+  if (p.wind) deepMerge(state.wind, p.wind);
+  if (p.plate) deepMerge(state.plate, p.plate);
+  if (p.env) deepMerge(state.env, p.env);
+  if (p.brush) deepMerge(state.brush, p.brush);
+  rebuildBladeTemplate();
+  syncGrassUniforms();
+  syncGroundUniforms();
+  syncEnvUniforms();
+  Dens.dirty = true;
+  refreshUI();
+  markSceneDirty();
+  toast('Preset: ' + p.name, 'ok');
+}
+
+/* ==========================================================================
+   12. PERSISTENCE
+   ========================================================================== */
+var SAVE_VERSION = 1;
+var LS_KEY = 'grasspainter.scene.v1';
+
+function b64enc(u8) {
+  var s = '', C = 0x8000;
+  for (var i = 0; i < u8.length; i += C) s += String.fromCharCode.apply(null, u8.subarray(i, i + C));
+  return btoa(s);
+}
+function b64dec(str) {
+  var bin = atob(str), u8 = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+/* 12 bytes per blade. Height is not stored — it is recomputed from the
+   restored plate, which keeps the file small and keeps grass welded to the
+   surface even if the terrain is regenerated. */
+function encodeBlades() {
+  var n = Grass.count, A = Grass.arr;
+  var buf = new ArrayBuffer(n * 12), dv = new DataView(buf);
+  for (var i = 0; i < n; i++) {
+    var o = i * 12, o3 = i * 3, o2 = i * 2;
+    dv.setInt16(o, clamp(Math.round(A.aOffset[o3] * 100), -32768, 32767), true);
+    dv.setInt16(o + 2, clamp(Math.round(A.aOffset[o3 + 2] * 100), -32768, 32767), true);
+    // Yaw is circular, so quantise over 256 steps with 256 === 0. Using 255
+    // would give both 0 and 2*PI a slot and make the round trip non-exact.
+    dv.setUint8(o + 4, Math.round((A.aRot[i] % TAU + TAU) % TAU / TAU * 256) & 255);
+    dv.setUint8(o + 5, clamp(Math.round(A.aSize[o2] * 127.5), 0, 255));
+    dv.setUint8(o + 6, clamp(Math.round(A.aSize[o2 + 1] * 127.5), 0, 255));
+    dv.setUint8(o + 7, clamp(Math.round(A.aShape[o2] * 127.5), 0, 255));
+    dv.setUint8(o + 8, clamp(Math.round(A.aShape[o2 + 1] * 85), 0, 255));
+    dv.setUint8(o + 9, clamp(Math.round(A.aSeed[i] * 255), 0, 255));
+    dv.setInt8(o + 10, clamp(Math.round(A.aNormal[o3] * 127), -127, 127));
+    dv.setInt8(o + 11, clamp(Math.round(A.aNormal[o3 + 2] * 127), -127, 127));
+  }
+  return new Uint8Array(buf);
+}
+function decodeBlades(u8) {
+  var n = Math.min((u8.byteLength / 12) | 0, MAX_BLADES);
+  var dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  for (var i = 0; i < n; i++) {
+    var o = i * 12;
+    var x = dv.getInt16(o, true) / 100, z = dv.getInt16(o + 2, true) / 100;
+    var nx = dv.getInt8(o + 10) / 127, nz = dv.getInt8(o + 11) / 127;
+    var ny = Math.sqrt(Math.max(0.0001, 1 - nx * nx - nz * nz));
+    writeBlade(i, x, heightAt(x, z), z, nx, ny, nz,
+      dv.getUint8(o + 4) / 256 * TAU,
+      dv.getUint8(o + 5) / 127.5,
+      dv.getUint8(o + 6) / 127.5,
+      dv.getUint8(o + 7) / 127.5,
+      dv.getUint8(o + 8) / 85,
+      dv.getUint8(o + 9) / 255);
+  }
+  Grass.count = n;
+  markDirty(0, MAX_BLADES - 1);
+  rebuildDensityGrid();
+}
+
+function encodeSculpt() {
+  var sc = Terrain.sculpt, any = false;
+  for (var i = 0; i < sc.length; i++) if (sc[i] !== 0) { any = true; break; }
+  if (!any) return null;
+  var buf = new ArrayBuffer(sc.length * 2), dv = new DataView(buf);
+  for (var k = 0; k < sc.length; k++)
+    dv.setInt16(k * 2, clamp(Math.round(sc[k] * 200), -32768, 32767), true);
+  return { n: Terrain.N, data: b64enc(new Uint8Array(buf)) };
+}
+
+function serializeScene() {
+  return {
+    app: 'grass-painter', version: SAVE_VERSION,
+    saved: new Date().toISOString(),
+    state: JSON.parse(JSON.stringify(state)),
+    camera: { r: cam.tSph.r, th: cam.tSph.th, ph: cam.tSph.ph,
+              tx: cam.tTarget.x, ty: cam.tTarget.y, tz: cam.tTarget.z },
+    sculpt: encodeSculpt(),
+    blades: { count: Grass.count, data: b64enc(encodeBlades()) }
+  };
+}
+
+function deserializeScene(obj) {
+  if (!obj || obj.app !== 'grass-painter') throw new Error('Not a Grass Painter scene file');
+  var fresh = defaultState();
+  deepMerge(fresh, obj.state || {});
+  state = fresh;
+
+  // Plate first — blade heights are derived from it.
+  Terrain.N = -1;                       // force a full rebuild
+  var newN = terrainSegs();
+  Terrain.sculpt = new Float32Array((newN + 1) * (newN + 1));
+  if (obj.sculpt && obj.sculpt.data) {
+    var raw = b64dec(obj.sculpt.data);
+    var dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    var srcN = obj.sculpt.n, srcW = srcN + 1;
+    var tmp = new Float32Array(srcW * srcW);
+    for (var i = 0; i < Math.min(tmp.length, raw.byteLength / 2); i++) tmp[i] = dv.getInt16(i * 2, true) / 200;
+    Terrain.sculpt = resampleSculpt(srcN, tmp, newN);
+  }
+  Terrain.N = newN;
+  Terrain.h = new Float32Array((newN + 1) * (newN + 1));
+  Terrain.base = new Float32Array((newN + 1) * (newN + 1));
+  computeTerrainHeights();
+  buildGroundGeometry();
+
+  Grass.count = 0;
+  Dens.grid.fill(0);
+  if (obj.blades && obj.blades.data) decodeBlades(b64dec(obj.blades.data));
+
+  rebuildBladeTemplate();
+  syncGrassUniforms();
+  syncGroundUniforms();
+  syncEnvUniforms();
+  updateGrassBounds();
+  Dens.dirty = true;
+
+  if (obj.camera) {
+    cam.tSph.r = obj.camera.r; cam.tSph.th = obj.camera.th; cam.tSph.ph = obj.camera.ph;
+    cam.tTarget.set(obj.camera.tx, obj.camera.ty, obj.camera.tz);
+    cam.snap();
+  }
+  History.undo.length = 0; History.redo.length = 0; History.bytes = 0;
+  refreshHistoryButtons();
+  refreshUI();
+  setTool(state.tool || 'paint');
+}
+
+function downloadBlob(blob, name) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+
+function saveScene() {
+  try {
+    var json = JSON.stringify(serializeScene());
+    var stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    downloadBlob(new Blob([json], { type: 'application/json' }), 'grass-scene-' + stamp + '.json');
+    toast('Saved ' + fmtInt(Grass.count) + ' blades', 'ok');
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'err', 6000);
+  }
+}
+
+function loadSceneFile(file) {
+  var fr = new FileReader();
+  fr.onload = function () {
+    try {
+      deserializeScene(JSON.parse(fr.result));
+      toast('Loaded ' + fmtInt(Grass.count) + ' blades', 'ok');
+      markSceneDirty();
+    } catch (e) {
+      toast('Load failed: ' + e.message, 'err', 6000);
+    }
+  };
+  fr.onerror = function () { toast('Could not read the file', 'err'); };
+  fr.readAsText(file);
+}
+
+/* ---- autosave ------------------------------------------------------------
+   A full field serialises to a couple of megabytes, which overflows
+   localStorage's ~5 MB (UTF-16) quota. IndexedDB has no such limit, so it is
+   the primary store; localStorage stays as a fallback for private-mode
+   browsers and holds a settings-only copy when the blades will not fit.
+   -------------------------------------------------------------------------- */
+var IDB_NAME = 'grasspainter', IDB_STORE = 'scenes', IDB_KEY = 'autosave';
+var _idbPromise = null;
+
+function idbOpen() {
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise(function (resolve) {
+    var idb = window.indexedDB;
+    if (!idb) { resolve(null); return; }
+    var req;
+    try { req = idb.open(IDB_NAME, 1); } catch (e) { resolve(null); return; }
+    req.onupgradeneeded = function () {
+      var db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { resolve(null); };
+    req.onblocked = function () { resolve(null); };
+  });
+  return _idbPromise;
+}
+function idbPut(value) {
+  return idbOpen().then(function (db) {
+    if (!db) return false;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = tx.onabort = function () { resolve(false); };
+      } catch (e) { resolve(false); }
+    });
+  });
+}
+function idbGet() {
+  return idbOpen().then(function (db) {
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(IDB_STORE, 'readonly');
+        var rq = tx.objectStore(IDB_STORE).get(IDB_KEY);
+        rq.onsuccess = function () { resolve(rq.result || null); };
+        rq.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+
+var _sceneDirty = false, _lastAuto = 0, _autoBusy = false, _autoWarned = false;
+function markSceneDirty() { _sceneDirty = true; }
+
+function autosaveTick(now) {
+  if (!state.scene.autosave || !_sceneDirty || _autoBusy) return;
+  if (now - _lastAuto < 30000) return;
+  _lastAuto = now;
+  _sceneDirty = false;
+  _autoBusy = true;
+
+  var snap;
+  try { snap = serializeScene(); }
+  catch (e) { _autoBusy = false; return; }
+
+  idbPut(snap).then(function (ok) {
+    _autoBusy = false;
+    if (ok) { flashSaved(); try { localStorage.removeItem(LS_KEY); } catch (e) {} return; }
+    // No IndexedDB — fall back to localStorage, shedding the blades if the
+    // quota rejects the full scene.
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(snap));
+      flashSaved();
+    } catch (e2) {
+      try {
+        snap.blades = { count: 0, data: '' };
+        snap.tooBig = true;
+        localStorage.setItem(LS_KEY, JSON.stringify(snap));
+      } catch (e3) { /* nothing we can do */ }
+      if (!_autoWarned) {
+        _autoWarned = true;
+        toast('Autosave storage is full — settings only. Use Save to keep the grass.', 'err', 7000);
+      }
+    }
+  }, function () { _autoBusy = false; });
+}
+
+/* Async because IndexedDB is; calls back with true if a scene was restored. */
+function restoreAutosave(done) {
+  function fromLocal() {
+    var raw = null;
+    try { raw = localStorage.getItem(LS_KEY); } catch (e) {}
+    if (!raw) return done(false);
+    try { deserializeScene(JSON.parse(raw)); done(true); }
+    catch (e) { done(false); }
+  }
+  idbGet().then(function (obj) {
+    if (!obj) { fromLocal(); return; }
+    try { deserializeScene(obj); done(true); }
+    catch (e) { fromLocal(); }
+  }, fromLocal);
+}
+
+/* ---- PNG export ---------------------------------------------------------- */
+function exportPNG(scale) {
+  var pr = renderer.getPixelRatio();
+  try {
+    renderer.setPixelRatio(basePR * scale);
+    renderer.setSize(viewW, viewH, false);
+    renderFrame(0);
+    var url = renderer.domElement.toDataURL('image/png');
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'grass-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Exported PNG at ' + Math.round(viewW * basePR * scale) + ' × ' + Math.round(viewH * basePR * scale), 'ok');
+  } catch (e) {
+    toast('Export failed: ' + e.message, 'err');
+  } finally {
+    renderer.setPixelRatio(pr);
+    renderer.setSize(viewW, viewH, false);
+  }
+}

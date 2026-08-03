@@ -1,0 +1,297 @@
+/* ==========================================================================
+   29. SKETCHFAB BROWSER AND MODEL LIBRARY
+   --------------------------------------------------------------------------
+   Search Sketchfab, import a model, and it becomes a placeable kind usable by
+   every tool that used to place a procedural asset — the placement brush, the
+   scatter brush, road decoration, walking paths and traffic.
+   ========================================================================== */
+var Browser = { q: '', kind: 'building', maxFaces: 40000, sort: '-likeCount', results: [], next: null, busy: false };
+
+/* Filing a model under a category is the only decision import asks for, so it
+   defaults to whichever shelf the picker is currently filtered to. */
+function importTargetKindForMode() {
+  if (typeof PlaceCat === 'string' && PlaceCat !== 'all') return PlaceCat;
+  return 'building';
+}
+
+function showSketchfabBrowser(presetQuery) {
+  sfLoadToken();
+  if (presetQuery !== undefined) Browser.q = presetQuery;
+  Browser.kind = importTargetKindForMode();
+
+  openModal('Import from Sketchfab', function (body) {
+    /* ---- token ---- */
+    var tokenWrap = el('div');
+    body.appendChild(tokenWrap);
+    function paintToken() {
+      tokenWrap.innerHTML = '';
+      if (SF.token) {
+        var p = el('p', null, 'Signed in with a saved API token. ');
+        var chg = el('button', 'btn');
+        chg.textContent = 'Change token';
+        chg.setAttribute('data-tip', 'Replace or clear the stored Sketchfab API token');
+        chg.onclick = function () { sfSaveToken(''); paintToken(); };
+        p.appendChild(chg);
+        tokenWrap.appendChild(p);
+      } else {
+        tokenWrap.appendChild(el('p', null,
+          'Paste your Sketchfab API token (Settings → Password & API on sketchfab.com). ' +
+          'It is stored in this browser only — it is never written into the page source.'));
+        var row = el('div', 'sfbar');
+        var inp = el('input');
+        inp.type = 'text';
+        inp.placeholder = 'Sketchfab API token';
+        inp.setAttribute('data-tip', 'Required to download models. Search works without it.');
+        var save = el('button', 'btn pri', 'Save');
+        save.onclick = function () {
+          if (!inp.value.trim()) { toast('Enter a token first', 'err'); return; }
+          sfSaveToken(inp.value);
+          paintToken();
+          toast('Token saved to this browser', 'ok');
+        };
+        row.appendChild(inp); row.appendChild(save);
+        tokenWrap.appendChild(row);
+      }
+    }
+    paintToken();
+
+    /* ---- search bar ---- */
+    var bar = el('div', 'sfbar');
+    var q = el('input');
+    q.type = 'text';
+    q.placeholder = 'Search models — try "low poly house", "pine tree", "car"';
+    q.value = Browser.q;
+    q.setAttribute('data-tip', 'Only downloadable models are listed.');
+    bar.appendChild(q);
+
+    function selectEl(opts, value, tip) {
+      var w = el('div', 'sel');
+      var s = el('select');
+      opts.forEach(function (o) { var op = el('option', null, o.label); op.value = o.value; s.appendChild(op); });
+      s.value = value;
+      w.appendChild(s);
+      w.insertAdjacentHTML('beforeend', svgIcon('<path d="m6 9 6 6 6-6"/>', 2));
+      w.setAttribute('data-tip', tip);
+      return { wrap: w, sel: s };
+    }
+    var kindSel = selectEl(IMP_KINDS.map(function (k) { return { value: k.id, label: k.label }; }),
+      Browser.kind, 'Which shelf the model is filed on. It only decides where you find it again.');
+    bar.appendChild(kindSel.wrap);
+
+    var faceSel = selectEl([
+      { value: '8000', label: '≤ 8k faces' }, { value: '25000', label: '≤ 25k faces' },
+      { value: '60000', label: '≤ 60k faces' }, { value: '150000', label: '≤ 150k faces' },
+      { value: '0', label: 'Any size' }
+    ], String(Browser.maxFaces), 'Face-count cap. This is a world builder — a 500k-face model cannot be instanced hundreds of times at 60 FPS.');
+    bar.appendChild(faceSel.wrap);
+
+    var go = el('button', 'btn pri', 'Search');
+    bar.appendChild(go);
+    body.appendChild(bar);
+
+    var grid = el('div', 'sfgrid');
+    var msg = el('div', 'sfmsg', 'Search Sketchfab for a model to import.');
+    body.appendChild(msg);
+    body.appendChild(grid);
+
+    var more = el('div', 'btn-row');
+    var moreBtn = el('button', 'btn', 'Load more');
+    moreBtn.style.display = 'none';
+    moreBtn.onclick = function () { run(true); };
+    more.appendChild(moreBtn);
+    body.appendChild(more);
+
+    function run(append) {
+      Browser.q = q.value.trim();
+      Browser.kind = kindSel.sel.value;
+      Browser.maxFaces = parseInt(faceSel.sel.value, 10) || 0;
+      if (!append) { grid.innerHTML = ''; Browser.next = null; }
+      msg.className = 'sfmsg';
+      msg.textContent = 'Searching…';
+      moreBtn.style.display = 'none';
+      sfSearch({ q: Browser.q, maxFaces: Browser.maxFaces, count: 24, sort: Browser.sort,
+                 cursor: append ? Browser.next : null })
+        .then(function (res) {
+          Browser.next = res.next;
+          if (!res.results.length && !append) {
+            msg.textContent = 'No downloadable models matched. Try a broader search or raise the face limit.';
+            return;
+          }
+          msg.textContent = '';
+          res.results.forEach(function (m) { grid.appendChild(resultCard(m)); });
+          moreBtn.style.display = Browser.next ? '' : 'none';
+        })
+        .catch(function (e) {
+          msg.className = 'sfmsg err';
+          msg.textContent = e.message || String(e);
+        });
+    }
+
+    function resultCard(m) {
+      var card = el('button', 'sfcard');
+      var img = el('img');
+      if (m.thumb) img.src = m.thumb;
+      img.alt = '';
+      card.appendChild(img);
+      var prog = el('div', 'sfprog');
+      var bar2 = el('i');
+      prog.appendChild(bar2);
+      card.appendChild(prog);
+      var meta = el('div', 'meta');
+      meta.appendChild(el('b', null, m.name));
+      meta.appendChild(el('span', null, 'by ' + m.author));
+      meta.appendChild(el('span', 'fc', fmtInt(m.faces) + ' faces · ' + (m.license || 'see licence')));
+      card.appendChild(meta);
+      card.setAttribute('data-tip', 'Import "' + m.name + '" into the ' +
+        (IMP_KINDS.filter(function (k) { return k.id === Browser.kind; })[0] || {}).label + ' library');
+
+      if (ASSETS[m.uid]) { card.classList.add('done'); meta.lastChild.textContent = 'Already in your library'; }
+
+      card.onclick = function () {
+        if (ASSETS[m.uid]) { toast('Already imported', 'ok'); return; }
+        if (!SF.token) { toast('Add your Sketchfab API token first', 'err'); return; }
+        card.classList.add('busy');
+        meta.lastChild.textContent = 'Downloading…';
+        importFromSketchfab(m, Browser.kind, function (p) { bar2.style.width = Math.round(p * 100) + '%'; })
+          .then(function (def) {
+            card.classList.remove('busy');
+            card.classList.add('done');
+            bar2.style.width = '100%';
+            meta.lastChild.textContent = fmtInt(def.tris) + ' tris · ' + def.parts.length + ' material' +
+              (def.parts.length === 1 ? '' : 's');
+            toast('Imported "' + def.label + '"', 'ok');
+          })
+          .catch(function (e) {
+            card.classList.remove('busy');
+            bar2.style.width = '0';
+            meta.lastChild.textContent = e.message || 'Import failed';
+            meta.lastChild.style.color = 'var(--danger)';
+            toast(e.message || 'Import failed', 'err', 5000);
+          });
+      };
+      return card;
+    }
+
+    go.onclick = function () { run(false); };
+    q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); run(false); } e.stopPropagation(); });
+    if (Browser.q) run(false);
+  }, [{ label: 'Done', kind: 'pri', run: buildPanel }], { wide: true });
+}
+
+/* Download (or pull from cache), convert, register, and make it selectable. */
+function importFromSketchfab(meta, kind, onProgress) {
+  return acquireModel(meta.uid, { name: meta.name, author: meta.author, faces: meta.faces, license: meta.license }, onProgress)
+    .then(function (buf) { return importGLB(buf, meta.name); })
+    .then(function (model) {
+      if (model.tris > 300000) {
+        toast('"' + model.name + '" is ' + fmtInt(model.tris) + ' triangles — placing many copies will be slow', 'err', 6000);
+      }
+      var def = defImported(meta.uid, model, {
+        label: meta.name, kind: kind, author: meta.author, license: meta.license,
+        sway: kind === 'nature' ? 0.5 : 0,
+        scale: 1
+      });
+      saveLibraryIndex();
+      // select it straight away so the next click on the ground places it
+      state.place.kind = meta.uid;
+      state.place.kinds = [meta.uid];
+      if (kind === 'person' || kind === 'vehicle') state.people.place = meta.uid;
+      markSceneDirty();
+      return def;
+    });
+}
+
+/* ==========================================================================
+   LIBRARY PANEL SECTION
+   ========================================================================== */
+/* One row per model: what it costs, which shelf it is on, how big and how
+   much it moves in the wind. Everything a model needs, next to the model. */
+function panelLibrary(host) {
+  var b = addGroup(host, 'Your models');
+
+  var ids = Object.keys(ASSETS);
+  if (!ids.length) {
+    addNote(b, 'Nothing here yet. Press <b>Add models</b> above to bring something in from Sketchfab.');
+    return;
+  }
+
+  ids.sort(function (a, c) { return ASSETS[a].label.localeCompare(ASSETS[c].label); });
+
+  ids.forEach(function (id) {
+    var def = ASSETS[id];
+    var row = el('div', 'lib');
+    var cv = el('canvas');
+    try { renderThumb(id, cv); } catch (e) {}
+    row.appendChild(cv);
+    var info = el('div', 'info');
+    info.appendChild(el('b', null, def.label));
+    info.appendChild(el('span', null, fmtInt(def.tris) + ' tris · ' + def.height.toFixed(1) + ' m tall'));
+    row.appendChild(info);
+
+    var del = el('button', 'ic');
+    del.innerHTML = svgIcon(ICON.trash);
+    del.setAttribute('data-tip', 'Throw this model away, along with every copy in the world');
+    del.onclick = function () {
+      confirmDialog('Throw away "' + def.label + '"?',
+        'This takes the model out of your library and removes every copy of it in the world. The download stays in this browser, so bringing it back is instant.',
+        'Throw it away', function () { removeImported(id); buildPanel(); toast('Removed ' + def.label); });
+    };
+    row.appendChild(del);
+    b.appendChild(row);
+
+    var cfg = el('div');
+    b.appendChild(cfg);
+    addSelect(cfg, {
+      label: 'Shelf',
+      get: function () { return def.kind; },
+      set: function (v) {
+        var objs = [];
+        for (var i = 0; i < World.objs.length; i++) if (World.objs[i].kind === id) objs.push(World.objs[i]);
+        def.kind = v;
+        def.cat = 'imp_' + v;
+        for (var k = 0; k < objs.length; k++) objs[k].cat = CAT_OF[v] || 'props';
+        rebuildAssetCats();
+        applyLayerVisibility();
+        saveLibraryIndex();
+        markSceneDirty();
+      },
+      tip: 'Which shelf you find this model on in the picker.',
+      options: IMP_KINDS.map(function (k) { return { value: k.id, label: k.label }; })
+    });
+    addSlider(cfg, {
+      label: 'True size', min: 0.05, max: 20, step: 0.01, dec: 2, def: 1, unit: '×',
+      tip: 'Fixes a model that arrived at the wrong scale. Every copy already in the world changes with it.',
+      get: function () { return def.scale; },
+      set: function (v) { def.scale = v; saveLibraryIndex(); rescaleKind(id); markSceneDirty(); }
+    });
+    addSlider(cfg, {
+      label: 'Sways in the wind', min: 0, max: 2, step: 0.01, dec: 2, def: 0,
+      tip: 'How much this model bends in the same wind as the grass. Good for leaves, leave at 0 for solid things.',
+      get: function () { return def.sway; },
+      set: function (v) { def.sway = v; saveLibraryIndex(); reswayKind(id); markSceneDirty(); }
+    });
+  });
+
+  var note = addNote(b, 'Models are kept in this browser, so reopening a world does not download them again.');
+  sfCacheSize().then(function (n) {
+    if (n > 0) note.textContent = 'Models are kept in this browser (' + (n / 1048576).toFixed(1) +
+      ' MB), so reopening a world does not download them again.';
+  });
+}
+
+function rescaleKind(id) {
+  for (var i = 0; i < World.objs.length; i++) {
+    var o = World.objs[i];
+    if (o.kind !== id) continue;
+    updateObject(o);
+  }
+}
+function reswayKind(id) {
+  var def = ASSETS[id];
+  for (var i = 0; i < World.objs.length; i++) {
+    var o = World.objs[i];
+    if (o.kind !== id) continue;
+    o.sway = def.sway;
+    updateObject(o);
+  }
+}

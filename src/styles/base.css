@@ -1,0 +1,60 @@
+*,
+*::before,
+*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html,
+body,
+#root { height: 100%; overflow: hidden; }
+
+body {
+  background: var(--soil);
+  color: var(--chalk);
+  font-family: var(--f);
+  font-size: var(--fs2);
+  line-height: 1.45;
+  font-variation-settings: "wdth" 100;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+button,
+input,
+select,
+textarea { font: inherit; color: inherit; font-family: var(--f); }
+button { background: none; border: 0; cursor: pointer; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule-2); border-radius: 99px; border: 3px solid var(--loam); }
+::-webkit-scrollbar-thumb:hover { background: #554b39; }
+
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; border-radius: var(--r1); }
+
+/* The wide grotesque names things: stations, group titles, headings. Nothing
+   else — at small sizes it stops being a voice and starts being noise. */
+.wide { font-variation-settings: "wdth" 118; letter-spacing: -0.005em; }
+.num { font-family: var(--fm); font-variant-numeric: tabular-nums; }
+
+kbd {
+  font: 500 var(--fs0)/1 var(--fm);
+  background: var(--husk);
+  color: var(--chalk);
+  border: 1px solid var(--rule-2);
+  border-bottom-width: 2px;
+  border-radius: var(--r1);
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

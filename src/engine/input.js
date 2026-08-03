@@ -1,0 +1,681 @@
+import { ball } from './grass.js';
+import * as THREE from 'three';
+import { emit, ui } from './host.js';
+import { ASSETS, makeImpMaterial } from './assets.js';
+import { syncGroundUniforms } from './field.js';
+import { Brush, beginStroke, doRedo, doUndo, endStroke, eyedrop, fillPlate, paintStamp, smoothStamp } from './history.js';
+import { MODES, allTools, currentTool, focusSelection, setMode, setTool, toggleSimulate } from './modes.js';
+import { exportPNG, markSceneDirty, saveScene } from './persistence.js';
+import { applyPreset } from './presets.js';
+import { PT, stopRender } from './pathtrace.js';
+import { cam, camera, canvas, resize, scene, viewH, viewW } from './renderer.js';
+import { Sel, _projV, boxSelect, clearSelection, commitSelectionChange, deleteSelection, duplicateSelection, gizmoHit, gizmoScale, moveSelection, pickObject, pickRoad, rotateSelection, scaleSelection, selectObjects, selectRoad, selectionCenter, snapshotSelection, stampPrefab } from './selection.js';
+import { state } from './state.js';
+import { Sculpt, Terrain, _rayD, _rayO, applyRamp, beginSculptStroke, endSculptStroke, heightAt, raycastGround, screenRay, sculptStamp } from './terrain.js';
+import { DEG, clamp, nowMs } from './util.js';
+import { LayerState, World, _upV, eraseWorldStamp, placeObjectAt, recordObjAdd, resolvePlacement, scatterStamp, updateObject } from './world.js';
+
+/* ==========================================================================
+   14. INPUT
+   ========================================================================== */
+export var Cursor = {
+  sx: 0, sy: 0, over: false,
+  world: new THREE.Vector3(), has: false,
+  prev: new THREE.Vector3(), hasPrev: false,
+  vx: 0, vz: 0
+};
+export var Ptr = {
+  ids: [],                 // active pointer ids, in order
+  pos: {},                 // id -> {x, y}
+  mode: null,              // 'stroke' | 'orbit' | 'pan' | 'pinch'
+  lastX: 0, lastY: 0,
+  pinchD: 0, pinchX: 0, pinchY: 0,
+  strokeId: -1, primary: -1
+};
+export var Keys = {
+  space: false, alt: false, shift: false, ctrl: false, uiHidden: false,
+  move: { f: false, b: false, l: false, r: false, u: false, d: false }
+};
+export var _ballVel = { x: 0, z: 0 };
+
+/* Which tool a stroke should use, taking modifier overrides into account. */
+
+
+
+
+
+export function typingInField(e) {
+  var t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
+}
+
+
+
+
+/* Whether the chrome is hidden (H). The engine only cares because the brush
+   ring should disappear along with it; React owns the actual hiding. */
+export function setUiHidden(hidden) {
+  Keys.uiHidden = !!hidden;
+  resize();
+}
+
+/* ==========================================================================
+   STROKES
+   ========================================================================== */
+
+
+
+
+
+
+/* Interpolate along the stroke so a fast drag never leaves gaps. */
+
+
+
+
+export function moveBall(x, z) {
+  var r = state.interact.ballRadius;
+  _ballVel.x = x - ball.position.x;
+  _ballVel.z = z - ball.position.z;
+  ball.position.set(x, heightAt(x, z) + r, z);
+}
+
+/* Re-project the last screen position onto the ground every frame, so the
+   brush preview stays correct while the camera moves. */
+export function updateCursorWorld() {
+  screenRay(Cursor.sx, Cursor.sy);
+  Cursor.prev.copy(Cursor.world);
+  var hit = raycastGround(_rayO, _rayD, Cursor.world);
+  if (hit) {
+    if (Cursor.has) { Cursor.vx = Cursor.world.x - Cursor.prev.x; Cursor.vz = Cursor.world.z - Cursor.prev.z; }
+    Cursor.has = true;
+  } else {
+    Cursor.has = false; Cursor.vx = Cursor.vz = 0;
+  }
+  return Cursor.has;
+}
+/* ==========================================================================
+   28. INPUT — one grammar, everywhere
+   --------------------------------------------------------------------------
+     click        place or pick
+     drag         shape / plant / scatter
+     Alt          the other way (dig instead of raise, rub out instead of add)
+     [ ]          brush size
+     R            turn what you are about to place
+     Esc          cancel
+   ========================================================================== */
+export var Pending = { ptDrag: null, marquee: null, gizmo: null, ramp: null };
+export var Ghost = { meshes: [], kind: null, rot: 0, scale: 1 };
+
+
+export function isSculptMode() { return state.world.mode === 'terrain'; }
+export function isBrushTool(t) {
+  return t === 'paint' || t === 'erase' || t === 'smooth' || t === 'eyedropper' ||
+         t === 'sculpt' || t === 'place_many' || t === 'place_erase';
+}
+export function isPaintTool(t) { return isBrushTool(t); }
+export function isPlaceTool(t) { return t === 'place_one'; }
+export function effectiveTool() {
+  var t = state.tool;
+  if (Keys.alt) {
+    if (t === 'paint' || t === 'smooth') return 'erase';
+    if (t === 'place_many') return 'place_erase';
+  }
+  return t;
+}
+export function ghostKind() {
+  return state.world.mode === 'place' ? state.place.kind : null;
+}
+export function placeKinds() {
+  var out = [];
+  for (var i = 0; i < state.place.kinds.length; i++)
+    if (ASSETS[state.place.kinds[i]]) out.push(state.place.kinds[i]);
+  if (!out.length && ASSETS[state.place.kind]) out.push(state.place.kind);
+  return out;
+}
+export function currentPrefab() {
+  var k = state.place.kind;
+  if (!k || k.indexOf('pf') !== 0) return null;
+  for (var i = 0; i < World.prefabs.length; i++) if (World.prefabs[i].id === k) return World.prefabs[i];
+  return null;
+}
+
+/* ---- ghost preview -------------------------------------------------------
+   An imported model is several merged materials, so the ghost is one mesh per
+   part sharing a single transform.
+   -------------------------------------------------------------------------- */
+export function disposeGhost() {
+  for (var i = 0; i < Ghost.meshes.length; i++) {
+    scene.remove(Ghost.meshes[i]);
+    Ghost.meshes[i].geometry.dispose();
+    Ghost.meshes[i].material.dispose();
+  }
+  Ghost.meshes.length = 0;
+  Ghost.kind = null;
+}
+export function ensureGhost(kind) {
+  if (Ghost.kind === kind && Ghost.meshes.length) return true;
+  disposeGhost();
+  var def = kind && ASSETS[kind];
+  if (!def) return false;
+  for (var p = 0; p < def.parts.length; p++) {
+    var part = def.parts[p], base = part.geo;
+    var g = new THREE.InstancedBufferGeometry();
+    g.setAttribute('position', base.attributes.position);
+    g.setAttribute('normal', base.attributes.normal);
+    g.setAttribute('uv', base.attributes.uv);
+    if (base.attributes.aVid) g.setAttribute('aVid', base.attributes.aVid);
+    if (base.index) g.setIndex(base.index);
+    var d = { iPosSeed: [0, 0, 0, 0.5], iQuat: [0, 0, 0, 1], iSclSway: [1, 1, 1, 0],
+              iTint: [1, 1, 1], iAnim: [0, 0, 0, 0] };
+    for (var n in d) g.setAttribute(n, new THREE.InstancedBufferAttribute(new Float32Array(d[n]), d[n].length));
+    g.instanceCount = 1;
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    var mesh = new THREE.Mesh(g, makeImpMaterial(def, part, p, true));
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 60;
+    scene.add(mesh);
+    Ghost.meshes.push(mesh);
+  }
+  Ghost.kind = kind;
+  return true;
+}
+export var _ghostQ = new THREE.Quaternion();
+export function updateGhost() {
+  var kind = ghostKind();
+  var show = isPlaceTool(state.tool) && kind && ASSETS[kind] && Cursor.over && Cursor.has &&
+             Ptr.mode !== 'orbit' && Ptr.mode !== 'pan' && Ptr.mode !== 'look';
+  if (!show) {
+    for (var h = 0; h < Ghost.meshes.length; h++) Ghost.meshes[h].visible = false;
+    return;
+  }
+  if (!ensureGhost(kind)) return;
+  var def = ASSETS[kind];
+  var res = resolvePlacement(kind, Cursor.world.x, Cursor.world.z);
+  var rot = (def.kind === 'building' && state.build.snap === 'road' && res.snapped)
+    ? res.rotY : (Ghost.rot + state.build.rotation * DEG);
+  var sc = Ghost.scale * (def.scale || 1) * state.place.size;
+  _ghostQ.setFromAxisAngle(_upV, rot);
+  var y = heightAt(res.x, res.z);
+  for (var i = 0; i < Ghost.meshes.length; i++) {
+    var a = Ghost.meshes[i].geometry.attributes;
+    a.iPosSeed.array[0] = res.x; a.iPosSeed.array[1] = y; a.iPosSeed.array[2] = res.z;
+    a.iQuat.array[0] = _ghostQ.x; a.iQuat.array[1] = _ghostQ.y;
+    a.iQuat.array[2] = _ghostQ.z; a.iQuat.array[3] = _ghostQ.w;
+    a.iSclSway.array[0] = a.iSclSway.array[1] = a.iSclSway.array[2] = sc;
+    a.iPosSeed.needsUpdate = true; a.iQuat.needsUpdate = true; a.iSclSway.needsUpdate = true;
+    Ghost.meshes[i].visible = true;
+  }
+}
+
+export function cancelPending() {
+  Pending.ptDrag = null; Pending.ramp = null;
+  ui.marquee(null);
+  Pending.marquee = null;
+}
+
+/* ==========================================================================
+   POINTER
+   ========================================================================== */
+export function bindInput() {
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  canvas.addEventListener('pointerdown', function (e) {
+    /* A traced image is only valid for the view it was traced from, so the
+       first touch of the world puts you back in the fast view rather than
+       leaving a photograph of somewhere you are no longer looking. */
+    if (PT.active) { stopRender(); return; }
+    // A lost pointerup (window blur, capture stolen, alert) used to strand
+    // Ptr.mode and jam the camera in look mode. Starting a fresh gesture with
+    // no buttons held resets the bookkeeping.
+    if (e.buttons === 0 || Ptr.ids.length === 0) { Ptr.ids.length = 0; Ptr.pos = {}; Ptr.mode = null; Ptr.primary = -1; }
+    canvas.setPointerCapture(e.pointerId);
+    Ptr.ids.push(e.pointerId);
+    if (Ptr.primary < 0) Ptr.primary = e.pointerId;
+    Ptr.pos[e.pointerId] = { x: e.clientX, y: e.clientY };
+    Cursor.sx = e.offsetX; Cursor.sy = e.offsetY; Cursor.over = true;
+
+    if (e.pointerType === 'touch' && Ptr.ids.length === 2) {
+      endCurrentStroke();
+      Ptr.mode = 'pinch';
+      var a = Ptr.pos[Ptr.ids[0]], b = Ptr.pos[Ptr.ids[1]];
+      Ptr.pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+      Ptr.pinchX = (a.x + b.x) / 2; Ptr.pinchY = (a.y + b.y) / 2;
+      return;
+    }
+    if (Ptr.ids.length > 1) return;
+    Ptr.lastX = e.clientX; Ptr.lastY = e.clientY;
+
+    if (e.button === 1) { Ptr.mode = 'pan'; e.preventDefault(); return; }
+    if (e.button === 2) { Ptr.mode = 'look'; canvas.classList.add('drag'); e.preventDefault(); return; }
+    if (e.button !== 0) return;
+    if (Keys.space) { Ptr.mode = 'orbit'; canvas.classList.add('drag'); e.preventDefault(); return; }
+
+    updateCursorWorld();
+    Ptr.mode = 'tool';
+    Ptr.strokeId = e.pointerId;
+    onToolDown(e);
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    Cursor.sx = e.offsetX; Cursor.sy = e.offsetY; Cursor.over = true;
+    if (Ptr.pos[e.pointerId]) { Ptr.pos[e.pointerId].x = e.clientX; Ptr.pos[e.pointerId].y = e.clientY; }
+
+    if (Ptr.mode === 'pinch' && Ptr.ids.length >= 2) {
+      var a = Ptr.pos[Ptr.ids[0]], b = Ptr.pos[Ptr.ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if (Ptr.pinchD > 0) cam.dolly(clamp(Ptr.pinchD / Math.max(d, 1), 0.5, 2));
+      cam.pan(mx - Ptr.pinchX, my - Ptr.pinchY);
+      Ptr.pinchD = d; Ptr.pinchX = mx; Ptr.pinchY = my;
+      return;
+    }
+    var dx = e.clientX - Ptr.lastX, dy = e.clientY - Ptr.lastY;
+    Ptr.lastX = e.clientX; Ptr.lastY = e.clientY;
+    if (Ptr.mode === 'look') { cam.look(dx, dy); return; }
+    if (Ptr.mode === 'orbit') { cam.orbit(dx, dy); return; }
+    if (Ptr.mode === 'pan') { cam.pan(dx, dy); return; }
+    if (Ptr.mode === 'tool') { onToolMove(e, dx, dy); return; }
+  });
+
+  function up(e) {
+    var i = Ptr.ids.indexOf(e.pointerId);
+    if (i >= 0) Ptr.ids.splice(i, 1);
+    delete Ptr.pos[e.pointerId];
+    try { canvas.releasePointerCapture(e.pointerId); } catch (x) {}
+    canvas.classList.remove('drag');
+    if (Ptr.mode === 'tool') onToolUp();
+    // the gesture ends when the pointer that started it is released
+    if (Ptr.ids.length === 0 || e.pointerId === Ptr.primary) { Ptr.mode = null; Ptr.primary = Ptr.ids.length ? Ptr.ids[0] : -1; }
+    else if (Ptr.mode === 'pinch' && Ptr.ids.length === 1) {
+      Ptr.mode = null;
+      var only = Ptr.pos[Ptr.ids[0]];
+      if (only) { Ptr.lastX = only.x; Ptr.lastY = only.y; }
+    }
+  }
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  window.addEventListener('pointerup', function (e) { if (Ptr.ids.indexOf(e.pointerId) >= 0) up(e); });
+  window.addEventListener('blur', function () {
+    if (Ptr.mode === 'tool') endCurrentStroke();
+    Ptr.ids.length = 0; Ptr.pos = {}; Ptr.mode = null; Ptr.primary = -1;
+    canvas.classList.remove('drag');
+  });
+  canvas.addEventListener('pointerleave', function () { Cursor.over = false; });
+  canvas.addEventListener('pointerenter', function () { Cursor.over = true; });
+
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    // while holding right-mouse to look around, the wheel trims fly speed
+    if (Ptr.mode === 'look') {
+      state.cam.flySpeed = clamp(state.cam.flySpeed * Math.exp(-e.deltaY * 0.0012), 1, 400);
+      ui.toast('Fly speed ' + state.cam.flySpeed.toFixed(0) + ' m/s', null, 900, 'flyspeed');
+      emit('state');
+      return;
+    }
+    // The wheel always drives the camera — that is what makes flying around
+    // feel effortless. Turning the ghost is on R and Alt+wheel instead.
+    if (e.altKey && isPlaceTool(state.tool) && ghostKind()) {
+      if (e.shiftKey) Ghost.scale = clamp(Ghost.scale * Math.exp(-e.deltaY * 0.0012), 0.15, 8);
+      else Ghost.rot += (e.deltaY > 0 ? 1 : -1) * (Math.PI / 12);
+      updateGhost();
+      return;
+    }
+    cam.dolly(Math.exp(clamp(e.deltaY, -240, 240) * 0.0013));
+  }, { passive: false });
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', function (e) {
+    if (e.code === 'Space') Keys.space = false;
+    Keys.alt = e.altKey; Keys.shift = e.shiftKey; Keys.ctrl = e.ctrlKey || e.metaKey;
+    setMoveKey(e, false);
+    emit('mode');
+  });
+  window.addEventListener('blur', function () {
+    Keys.space = Keys.alt = Keys.shift = Keys.ctrl = false;
+    Keys.move.f = Keys.move.b = Keys.move.l = Keys.move.r = Keys.move.u = Keys.move.d = false;
+    emit('mode');
+  });
+}
+
+/* ---- tool dispatch ------------------------------------------------------- */
+export function onToolDown(e) {
+  var mode = state.world.mode, tool = effectiveTool();
+
+  if (mode === 'select') {
+    var hit = gizmoHit(Cursor.sx, Cursor.sy);
+    if (hit) { Pending.gizmo = hit; Pending.gizmo.before = snapshotSelection(); return; }
+    if (!Cursor.has) { clearSelection(); return; }
+    var o = pickObject(Cursor.sx, Cursor.sy);
+    if (o) { selectObjects([o], e.shiftKey); emit('selection'); return; }
+    var rd = pickRoad(Cursor.world.x, Cursor.world.z);
+    if (rd) { selectRoad(rd); emit('selection'); return; }
+    Pending.marquee = { x0: Cursor.sx, y0: Cursor.sy, add: e.shiftKey };
+    if (!e.shiftKey) clearSelection();
+    return;
+  }
+
+  if (!Cursor.has) { Ptr.mode = null; return; }
+
+  if (mode === 'place' && state.tool === 'place_one') {
+    var kind = state.place.kind;
+    if (!kind) {
+      ui.toast('No model chosen — pick one in the panel', null, 2600);
+      Ptr.mode = null;
+      return;
+    }
+    beginStroke('Place');
+    var made = [];
+    var pf = currentPrefab();
+    if (pf) made = stampPrefab(pf, Cursor.world.x, Cursor.world.z, Ghost.rot);
+    else {
+      var o2 = placeObjectAt(kind, Cursor.world.x, Cursor.world.z, { rotY: undefined });
+      if (o2) {
+        var def = ASSETS[kind];
+        if (!(def && def.kind === 'building' && state.build.snap === 'road')) {
+          o2.rotY = Ghost.rot + state.build.rotation * DEG;
+        }
+        o2.scale = Ghost.scale * o2.scale;
+        updateObject(o2);
+        made = [o2];
+      }
+    }
+    if (made.length) recordObjAdd(made);
+    endStroke();
+    markSceneDirty();
+    Ptr.mode = null;      // a click, not a drag
+    return;
+  }
+
+  // brush-style tools
+  if (isSculptMode() && state.sculpt.mode === 'ramp') {
+    Pending.ramp = true;
+    beginStroke('Ramp');
+    Sculpt.snap = Terrain.sculpt.slice();
+    beginSculptStroke(Cursor.world.x, Cursor.world.z);
+    return;
+  }
+  startStroke(tool);
+}
+
+export function onToolMove(e, dx, dy) {
+  if (Pending.gizmo) { dragGizmo(e, dx, dy); return; }
+  if (Pending.marquee) {
+    var q = Pending.marquee;
+    ui.marquee({
+      left: Math.min(q.x0, Cursor.sx),
+      top: Math.min(q.y0, Cursor.sy),
+      width: Math.abs(Cursor.sx - q.x0),
+      height: Math.abs(Cursor.sy - q.y0)
+    });
+    return;
+  }
+  if (!_strokeActive) return;
+  updateCursorWorld();
+  if (Ptr.strokeId === e.pointerId && Cursor.has && Ptr.mode === 'tool' && !Pending.ramp)
+    strokeTo(Cursor.world.x, Cursor.world.z);
+}
+
+export function onToolUp() {
+  if (Pending.gizmo) {
+    commitSelectionChange(Pending.gizmo.before, 'Transform');
+    Pending.gizmo = null;
+    return;
+  }
+  if (Pending.marquee) {
+    var q = Pending.marquee;
+    ui.marquee(null);
+    if (Math.abs(Cursor.sx - q.x0) > 4 && Math.abs(Cursor.sy - q.y0) > 4)
+      boxSelect(q.x0, q.y0, Cursor.sx, Cursor.sy, q.add);
+    Pending.marquee = null;
+    emit('selection');
+    return;
+  }
+  if (Pending.ramp) {
+    Pending.ramp = null;
+    if (Cursor.has) applyRamp(Cursor.world.x, Cursor.world.z);
+    endSculptStroke();
+    endStroke();
+    markSceneDirty();
+    return;
+  }
+  endCurrentStroke();
+}
+
+/* ---- gizmo dragging ------------------------------------------------------ */
+export var _gizPlane = new THREE.Vector3();
+export function dragGizmo(e, dx, dy) {
+  var g = Pending.gizmo;
+  if (g.mode === 'move') {
+    if (g.axis === 'y') {
+      moveSelection(0, -dy * gizmoScale(g.center) * 0.012, 0);
+    } else {
+      updateCursorWorld();
+      if (!Cursor.has) return;
+      var tx = Cursor.world.x - g.center.x, tz = Cursor.world.z - g.center.z;
+      if (g.axis === 'x') tz = 0;
+      else if (g.axis === 'z') tx = 0;
+      moveSelection(tx, 0, tz);
+      g.center = selectionCenter();
+    }
+  } else if (g.mode === 'rotate') {
+    _projV.set(g.center.x, g.center.y, g.center.z).project(camera);
+    var cx = (_projV.x * 0.5 + 0.5) * viewW, cy = (-_projV.y * 0.5 + 0.5) * viewH;
+    var a = Math.atan2(Cursor.sy - cy, Cursor.sx - cx);
+    var d = a - g.start;
+    g.start = a;
+    rotateSelection(-d);
+  } else {
+    scaleSelection(Math.exp(-dy * 0.006));
+  }
+}
+
+/* ---- strokes ------------------------------------------------------------- */
+export /* `_strokeTool` used to be consulted by every pointer-move, which meant an
+   interaction that started and stopped without a stroke — clicking Place with
+   no model chosen, say — left the last stroke tool armed, and the next drag
+   quietly painted grass in a station that has nothing to do with grass. The
+   latch is the fix: nothing strokes unless startStroke actually committed. */
+var _strokeTool = null, _strokeActive = false, _lastStampTime = 0;
+export function startStroke(tool) {
+  _strokeTool = null;
+  _strokeActive = false;
+  updateCursorWorld();
+  if (!Cursor.has) { Ptr.mode = null; return; }
+  Brush.hasLast = false;
+  Brush.leftover = 0;
+  Brush.start.copy(Cursor.world);
+  Brush.axis = 0;
+  _lastStampTime = nowMs();
+
+  if (tool === 'eyedropper') { eyedrop(Cursor.world.x, Cursor.world.z); Ptr.mode = null; return; }
+  if (tool === 'place_many' && !placeKinds().length) {
+    ui.toast('No model chosen — pick one in the panel', null, 2600);
+    Ptr.mode = null; return;
+  }
+  // Past every guard, so this really is a stroke.
+  _strokeTool = tool;
+  _strokeActive = true;
+
+  var label = 'Paint';
+  if (tool === 'erase') label = 'Erase grass';
+  else if (tool === 'smooth') label = 'Even out';
+  else if (tool === 'sculpt') label = 'Shape the ground';
+  else if (tool === 'place_many') label = 'Scatter';
+  else if (tool === 'place_erase') label = 'Remove';
+  beginStroke(label);
+  if (tool === 'sculpt') { Sculpt.snap = Terrain.sculpt.slice(); beginSculptStroke(Cursor.world.x, Cursor.world.z); }
+  strokeAt(Cursor.world.x, Cursor.world.z);
+  Brush.last.copy(Cursor.world);
+  Brush.hasLast = true;
+}
+export function endCurrentStroke() {
+  if (Ptr.mode !== 'tool') return;
+  if (!_strokeActive) { Ptr.mode = null; Ptr.strokeId = -1; return; }
+  if (_strokeTool === 'sculpt') endSculptStroke();
+  if (_strokeTool !== 'eyedropper') {
+    if (_strokeAdded.length) { recordObjAdd(_strokeAdded); _strokeAdded.length = 0; }
+    endStroke();
+  }
+  Brush.hasLast = false;
+  _strokeTool = null;
+  _strokeActive = false;
+  Ptr.mode = null;
+  Ptr.strokeId = -1;
+  emit('stats');
+  emit('state');
+}
+export function strokeTo(x, z) {
+  if (!_strokeActive || _strokeTool === 'eyedropper') return;
+  if (Keys.shift) {
+    if (!Brush.axis) {
+      var ax = Math.abs(x - Brush.start.x), az = Math.abs(z - Brush.start.z);
+      if (Math.max(ax, az) > state.brush.radius * 0.4) Brush.axis = ax > az ? 1 : 2;
+    }
+    if (Brush.axis === 1) z = Brush.start.z;
+    else if (Brush.axis === 2) x = Brush.start.x;
+  } else Brush.axis = 0;
+
+  var spacing = state.brush.radius * (_strokeTool === 'paint' ? 0.2 : 0.34);
+  if (!Brush.hasLast) { strokeAt(x, z); Brush.last.set(x, 0, z); Brush.hasLast = true; return; }
+  var dx = x - Brush.last.x, dz = z - Brush.last.z;
+  var dist = Math.sqrt(dx * dx + dz * dz);
+  if (dist < 1e-6) return;
+  var travel = dist + Brush.leftover;
+  var steps = Math.min(Math.floor(travel / spacing), 400);
+  var ux = dx / dist, uz = dz / dist;
+  var walked = spacing - Brush.leftover;
+  for (var s = 0; s < steps; s++) {
+    strokeAt(Brush.last.x + ux * walked, Brush.last.z + uz * walked);
+    walked += spacing;
+  }
+  Brush.leftover = travel - steps * spacing;
+  Brush.last.set(x, 0, z);
+}
+
+export var _strokeAdded = [];
+export function strokeAt(x, z) {
+  var now = nowMs();
+  var dt = clamp((now - _lastStampTime) / 1000, 0.001, 0.1);
+  _lastStampTime = now;
+  var t = _strokeTool;
+
+  if (t === 'paint') paintStamp(x, z, 1);
+  else if (t === 'erase') Brush.eraseQueue.push({ x: x, z: z, r: state.brush.radius, r2: state.brush.radius * state.brush.radius, p: state.brush.flow * 1.4 + 0.25 });
+  else if (t === 'smooth') smoothStamp(x, z, dt);
+  else if (t === 'sculpt') sculptStamp(x, z, dt);
+  else if (t === 'place_many') {
+    var made = scatterStamp(x, z, state.nature, placeKinds());
+    for (var i = 0; i < made.length; i++) _strokeAdded.push(made[i]);
+  } else if (t === 'place_erase') {
+    eraseWorldStamp(x, z, state.brush.radius, state.eraseMask);
+    if (state.eraseMask.grass)
+      Brush.eraseQueue.push({ x: x, z: z, r: state.brush.radius, r2: state.brush.radius * state.brush.radius, p: 1 });
+  }
+}
+
+/* ==========================================================================
+   KEYBOARD
+   ========================================================================== */
+/* WASD + QE are held-state, not one-shot, so they are tracked separately from
+   the command shortcuts below and integrated every frame. */
+export var MOVE_CODES = { KeyW: 'f', KeyS: 'b', KeyA: 'l', KeyD: 'r', KeyE: 'u', KeyQ: 'd' };
+export function setMoveKey(e, down) {
+  var slot = MOVE_CODES[e.code];
+  if (!slot) return false;
+  if (down && (e.ctrlKey || e.metaKey || e.altKey)) return false;  // let Ctrl+S etc through
+  Keys.move[slot] = down;
+  return true;
+}
+
+export function onKeyDown(e) {
+  Keys.alt = e.altKey; Keys.shift = e.shiftKey; Keys.ctrl = e.ctrlKey || e.metaKey;
+  if (e.code === 'Space') { Keys.space = true; if (!typingInField(e)) e.preventDefault(); }
+  emit('mode');
+  if (typingInField(e)) return;
+  // Same as a click: anything that would move the camera ends the render.
+  if (PT.active && (e.key === 'Escape' || MOVE_CODES[e.code])) { stopRender(); return; }
+  if (setMoveKey(e, true)) { e.preventDefault(); return; }
+
+  var mod = e.ctrlKey || e.metaKey;
+  if (mod) {
+    var k = e.key.toLowerCase();
+    if (k === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); return; }
+    if (k === 'y') { e.preventDefault(); doRedo(); return; }
+    if (k === 's') { e.preventDefault(); saveScene(); return; }
+    if (k === 'o') { e.preventDefault(); ui.openFile(); return; }
+    if (k === 'p') { e.preventDefault(); exportPNG(1); return; }
+    if (k === 'd') { e.preventDefault(); duplicateSelection(); return; }
+    if (k === 'a') {
+      e.preventDefault();
+      var all = World.objs.filter(function (o) { return !LayerState[o.cat].lock && LayerState[o.cat].vis; });
+      setMode('select'); selectObjects(all, false); emit('selection');
+      return;
+    }
+    if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); ui.askClearGrass(); return; }
+    return;
+  }
+
+  if (e.key >= '1' && e.key <= '4' && !e.shiftKey) { setMode(MODES[parseInt(e.key, 10) - 1].id); return; }
+  if (e.shiftKey && e.key >= '!' && e.key <= '^') {
+    var map = { '!': 0, '@': 1, '#': 2, '$': 3, '%': 4, '^': 5 };
+    if (map[e.key] !== undefined) { applyPreset(map[e.key]); return; }
+  }
+
+  switch (e.key) {
+    case 'Escape':
+      if (ui.escape()) return;
+      cancelPending();
+      // Escape means "stop what I am in the middle of", and in Place that is
+      // holding a model ready to drop.
+      if (state.world.mode === 'place' && state.place.kinds.length) {
+        state.place.kinds = [];
+        state.place.kind = '';
+        emit('state');
+      }
+      clearSelection();
+      return;
+    case 'Delete': case 'Backspace': deleteSelection(); return;
+    case 'x': case 'X': cycleTool(); return;
+    case 'r': Ghost.rot += Math.PI / 12; updateGhost(); return;
+    case 'R': Ghost.rot -= Math.PI / 12; updateGhost(); return;
+    case 'f': focusSelection(); return;
+    case 'F': fillPlate(); return;
+    case 'p': case 'P': toggleSimulate(); return;
+    case 'g': case 'G':
+      state.plate.grid = !state.plate.grid; syncGroundUniforms(); emit('state'); markSceneDirty(); return;
+    case '[': nudgeRadius(-1); return;
+    case ']': nudgeRadius(1); return;
+    case 'h': case 'H': ui.toggleUi(); return;
+    case 'Tab': e.preventDefault(); ui.togglePanel(); return;
+    case '?': ui.showShortcuts(); return;
+    case 'ArrowLeft': nudgeSel(-1, 0); e.preventDefault(); return;
+    case 'ArrowRight': nudgeSel(1, 0); e.preventDefault(); return;
+    case 'ArrowUp': nudgeSel(0, -1); e.preventDefault(); return;
+    case 'ArrowDown': nudgeSel(0, 1); e.preventDefault(); return;
+  }
+}
+export function cycleTool() {
+  var list = allTools(state.world.mode);
+  if (!list.length) return;
+  var cur = currentTool();
+  var i = 0;
+  for (var k = 0; k < list.length; k++) if (list[k].id === cur) i = k;
+  setTool(list[(i + 1) % list.length].id);
+}
+export function nudgeSel(dx, dz) {
+  if (!Sel.objs.length) return;
+  var n = state.sel.nudge;
+  var before = snapshotSelection();
+  moveSelection(dx * n, 0, dz * n);
+  commitSelectionChange(before, 'Nudge');
+}
+export function nudgeRadius(dir) {
+  var r = state.brush.radius;
+  state.brush.radius = clamp(r + dir * Math.max(0.1, r * 0.18), 0.25, 40);
+  emit('state');
+  markSceneDirty();
+}
+
+

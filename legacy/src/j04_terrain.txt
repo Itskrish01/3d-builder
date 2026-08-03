@@ -1,0 +1,277 @@
+/* ==========================================================================
+   6. TERRAIN / BASEPLATE
+   ========================================================================== */
+
+var Terrain = {
+  N: 1,                       // segments per side (grid is (N+1)^2 vertices)
+  h: new Float32Array(4),     // final height = procedural base + sculpt
+  base: new Float32Array(4),
+  sculpt: new Float32Array(4),
+  min: 0, max: 0,
+  mesh: null, geo: null, mat: null
+};
+
+var sky = null, ball = null, ring = null;
+
+function terrainSegs() {
+  if (state.plate.mode === 'flat') return 1;
+  return clamp(Math.round(Math.max(state.plate.width, state.plate.depth) * 2.6), 48, 192);
+}
+
+/* Resample the user's sculpt offsets when the grid resolution changes, so
+   resizing the plate or toggling modes never throws sculpting away. */
+function resampleSculpt(oldN, oldArr, newN) {
+  var out = new Float32Array((newN + 1) * (newN + 1));
+  if (!oldArr || oldN < 1) return out;
+  var oW = oldN + 1, nW = newN + 1;
+  for (var j = 0; j < nW; j++) {
+    var v = j / newN * oldN, jj = Math.min(oldN - 1, v | 0), fv = v - jj;
+    if (oldN === 0) { jj = 0; fv = 0; }
+    for (var i = 0; i < nW; i++) {
+      var u = i / newN * oldN, ii = Math.min(oldN - 1, u | 0), fu = u - ii;
+      var a = oldArr[jj * oW + ii], b = oldArr[jj * oW + Math.min(ii + 1, oldN)];
+      var c = oldArr[Math.min(jj + 1, oldN) * oW + ii], d = oldArr[Math.min(jj + 1, oldN) * oW + Math.min(ii + 1, oldN)];
+      out[j * nW + i] = lerp(lerp(a, b, fu), lerp(c, d, fu), fv);
+    }
+  }
+  return out;
+}
+
+function computeTerrainHeights() {
+  var p = state.plate, N = Terrain.N, W = N + 1;
+  var base = Terrain.base, h = Terrain.h, sc = Terrain.sculpt;
+  var mn = 1e9, mx = -1e9;
+  if (p.mode === 'flat') {
+    for (var k = 0; k < W * W; k++) { base[k] = 0; h[k] = 0; }
+    Terrain.min = 0; Terrain.max = 0;
+    return;
+  }
+  var oct = Math.max(1, Math.round(p.octaves));
+  for (var j = 0; j < W; j++) {
+    var z = (j / N - 0.5) * p.depth;
+    for (var i = 0; i < W; i++) {
+      var x = (i / N - 0.5) * p.width;
+      var n = SN.fbm(x * p.frequency, z * p.frequency, oct);
+      var idx = j * W + i;
+      base[idx] = n * p.amplitude;
+      var v = base[idx] + sc[idx];
+      h[idx] = v;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+  }
+  Terrain.min = mn; Terrain.max = mx;
+}
+
+function buildGroundGeometry() {
+  var N = Terrain.N, W = N + 1, p = state.plate;
+  var need = !Terrain.geo || Terrain.geo.userData.N !== N;
+  if (need) {
+    if (Terrain.geo) Terrain.geo.dispose();
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(W * W * 3), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(W * W * 3), 3));
+    var idx = (W * W > 65535) ? new Uint32Array(N * N * 6) : new Uint16Array(N * N * 6);
+    var o = 0;
+    for (var j = 0; j < N; j++) {
+      for (var i = 0; i < N; i++) {
+        var a = j * W + i, b = a + 1, c = a + W, d = c + 1;
+        idx[o++] = a; idx[o++] = c; idx[o++] = b;
+        idx[o++] = b; idx[o++] = c; idx[o++] = d;
+      }
+    }
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.userData.N = N;
+    Terrain.geo = g;
+    if (Terrain.mesh) Terrain.mesh.geometry = g;
+  }
+  updateGroundVerts(0, N);
+  Terrain.geo.computeBoundingSphere();
+}
+
+/* Rewrite vertex rows j0..j1 (inclusive) from the heightfield. */
+function updateGroundVerts(j0, j1) {
+  var N = Terrain.N, W = N + 1, p = state.plate, h = Terrain.h;
+  var pos = Terrain.geo.attributes.position, nrm = Terrain.geo.attributes.normal;
+  var pa = pos.array, na = nrm.array;
+  var cx = p.width / N, cz = p.depth / N;
+  j0 = clamp(j0, 0, N); j1 = clamp(j1, 0, N);
+  for (var j = j0; j <= j1; j++) {
+    var z = (j / N - 0.5) * p.depth;
+    for (var i = 0; i < W; i++) {
+      var k = j * W + i, o = k * 3;
+      pa[o] = (i / N - 0.5) * p.width;
+      pa[o + 1] = h[k];
+      pa[o + 2] = z;
+      // Analytic normal from central differences on the heightfield.
+      var hl = h[j * W + Math.max(i - 1, 0)], hr = h[j * W + Math.min(i + 1, N)];
+      var hd = h[Math.max(j - 1, 0) * W + i], hu = h[Math.min(j + 1, N) * W + i];
+      var dx = (hr - hl) / (cx * (i === 0 || i === N ? 1 : 2));
+      var dz = (hu - hd) / (cz * (j === 0 || j === N ? 1 : 2));
+      var nx = -dx, ny = 1, nz = -dz;
+      var il = 1 / Math.sqrt(nx * nx + 1 + nz * nz);
+      na[o] = nx * il; na[o + 1] = ny * il; na[o + 2] = nz * il;
+    }
+  }
+  var off = j0 * W * 3, cnt = (j1 - j0 + 1) * W * 3;
+  pos.updateRange.offset = off; pos.updateRange.count = cnt; pos.needsUpdate = true;
+  nrm.updateRange.offset = off; nrm.updateRange.count = cnt; nrm.needsUpdate = true;
+}
+
+/* Rebuild the whole plate. `keepSculpt` survives resolution changes. */
+function rebuildPlate() {
+  var newN = terrainSegs();
+  if (newN !== Terrain.N || Terrain.sculpt.length !== (newN + 1) * (newN + 1)) {
+    Terrain.sculpt = resampleSculpt(Terrain.N, Terrain.sculpt, newN);
+    Terrain.N = newN;
+    var n = (newN + 1) * (newN + 1);
+    Terrain.h = new Float32Array(n);
+    Terrain.base = new Float32Array(n);
+  }
+  computeTerrainHeights();
+  buildGroundGeometry();
+  syncGroundUniforms();
+  rebuildDensityGrid();
+  resnapAll();
+  updateGrassBounds();
+  if (Water.mesh) rebuildWater();
+  if (Roads.group) { for (var r = 0; r < World.roads.length; r++) World.roads[r]._dirty = true; rebuildAllRoads(); }
+  resnapWorld();
+}
+
+function heightAt(x, z) {
+  if (state.plate.mode === 'flat') return 0;
+  var p = state.plate, N = Terrain.N, W = N + 1, T = Terrain.h;
+  var u = clamp((x / p.width + 0.5) * N, 0, N - 1e-5);
+  var v = clamp((z / p.depth + 0.5) * N, 0, N - 1e-5);
+  var i = u | 0, j = v | 0, fu = u - i, fv = v - j;
+  var a = T[j * W + i], b = T[j * W + i + 1], c = T[(j + 1) * W + i], d = T[(j + 1) * W + i + 1];
+  return lerp(lerp(a, b, fu), lerp(c, d, fu), fv);
+}
+
+var _nrmTmp = new THREE.Vector3();
+function normalAt(x, z, out) {
+  out = out || _nrmTmp;
+  if (state.plate.mode === 'flat') return out.set(0, 1, 0);
+  var e = Math.max(state.plate.width, state.plate.depth) / Terrain.N;
+  var dx = (heightAt(x + e, z) - heightAt(x - e, z)) / (2 * e);
+  var dz = (heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e);
+  return out.set(-dx, 1, -dz).normalize();
+}
+
+/* --------------------------------------------------------------------------
+   Ray marching against the heightfield. Much faster and more robust than
+   raycasting 70k triangles, and it degenerates to an exact plane test when
+   the plate is flat.
+   -------------------------------------------------------------------------- */
+function raycastGround(ro, rd, out) {
+  var p = state.plate, hw = p.width * 0.5, hd = p.depth * 0.5;
+  out = out || new THREE.Vector3();
+
+  if (p.mode === 'flat') {
+    if (Math.abs(rd.y) < 1e-7) return null;
+    var t = -ro.y / rd.y;
+    if (t <= 0) return null;
+    var x = ro.x + rd.x * t, z = ro.z + rd.z * t;
+    if (Math.abs(x) > hw || Math.abs(z) > hd) return null;
+    return out.set(x, 0, z);
+  }
+
+  // Clip the ray to the terrain's bounding slab first.
+  var t0 = 0, t1 = 1e9;
+  var lo = [-hw, Terrain.min - 1, -hd], hi = [hw, Terrain.max + 1, hd];
+  var o = [ro.x, ro.y, ro.z], d = [rd.x, rd.y, rd.z];
+  for (var ax = 0; ax < 3; ax++) {
+    if (Math.abs(d[ax]) < 1e-9) { if (o[ax] < lo[ax] || o[ax] > hi[ax]) return null; continue; }
+    var ta = (lo[ax] - o[ax]) / d[ax], tb = (hi[ax] - o[ax]) / d[ax];
+    if (ta > tb) { var tmp = ta; ta = tb; tb = tmp; }
+    if (ta > t0) t0 = ta;
+    if (tb < t1) t1 = tb;
+    if (t0 > t1) return null;
+  }
+  t0 = Math.max(t0, 0);
+
+  var span = t1 - t0;
+  if (span <= 0) return null;
+  var steps = 256, step = span / steps;
+  var pt = t0, prev = ro.y + rd.y * t0 - heightAt(ro.x + rd.x * t0, ro.z + rd.z * t0);
+  if (prev < 0) {
+    // started underground — walk backwards is not useful, just accept entry
+    return out.set(ro.x + rd.x * t0, heightAt(ro.x + rd.x * t0, ro.z + rd.z * t0), ro.z + rd.z * t0);
+  }
+  for (var s = 1; s <= steps; s++) {
+    var tc = t0 + s * step;
+    var cx = ro.x + rd.x * tc, cz = ro.z + rd.z * tc;
+    var cur = ro.y + rd.y * tc - heightAt(cx, cz);
+    if (cur <= 0) {
+      // bisect between pt and tc
+      var lo2 = pt, hi2 = tc;
+      for (var b = 0; b < 14; b++) {
+        var mid = (lo2 + hi2) * 0.5;
+        var mx = ro.x + rd.x * mid, mz = ro.z + rd.z * mid;
+        if (ro.y + rd.y * mid - heightAt(mx, mz) > 0) lo2 = mid; else hi2 = mid;
+      }
+      var tf = (lo2 + hi2) * 0.5;
+      var fx = ro.x + rd.x * tf, fz = ro.z + rd.z * tf;
+      if (Math.abs(fx) > hw + 1e-3 || Math.abs(fz) > hd + 1e-3) return null;
+      return out.set(fx, heightAt(fx, fz), fz);
+    }
+    pt = tc; prev = cur;
+  }
+  return null;
+}
+
+var _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3(), _ndc = new THREE.Vector3();
+function screenRay(px, py) {
+  _ndc.set((px / viewW) * 2 - 1, -(py / viewH) * 2 + 1, 0.5);
+  _ndc.unproject(camera);
+  _rayO.copy(camera.position);
+  _rayD.copy(_ndc).sub(_rayO).normalize();
+  return true;
+}
+
+/* --------------------------------------------------------------------------
+   Sculpt brush — raise / lower / smooth / flatten on the sculpt offset grid.
+   -------------------------------------------------------------------------- */
+function sculptStamp(cx, cz, dt) {
+  var p = state.plate, b = state.brush, N = Terrain.N, W = N + 1;
+  if (p.mode !== 'terrain') return;
+  var r = b.radius, sc = Terrain.sculpt;
+  var i0 = clamp(Math.floor((( cx - r) / p.width + 0.5) * N), 0, N);
+  var i1 = clamp(Math.ceil ((( cx + r) / p.width + 0.5) * N), 0, N);
+  var j0 = clamp(Math.floor((( cz - r) / p.depth + 0.5) * N), 0, N);
+  var j1 = clamp(Math.ceil ((( cz + r) / p.depth + 0.5) * N), 0, N);
+  var amount = b.sculptStrength * dt * 4.0;
+  var mode = b.sculpt;
+  var edge = lerp(0.05, 0.96, b.falloff);
+
+  // For flatten we need the height under the brush centre first.
+  var flatH = heightAt(cx, cz);
+
+  for (var j = j0; j <= j1; j++) {
+    var z = (j / N - 0.5) * p.depth;
+    for (var i = i0; i <= i1; i++) {
+      var x = (i / N - 0.5) * p.width;
+      var dx = x - cx, dz = z - cz;
+      var dd = Math.sqrt(dx * dx + dz * dz) / r;
+      if (dd > 1) continue;
+      var w = 1 - smoothstep(edge, 1, dd);
+      var k = j * W + i;
+      if (mode === 'raise')       sc[k] += amount * w;
+      else if (mode === 'lower')  sc[k] -= amount * w;
+      else if (mode === 'flatten') sc[k] += (flatH - Terrain.h[k]) * clamp(amount * w * 1.4, 0, 1);
+      else { // smooth
+        var hl = Terrain.h[j * W + Math.max(i - 1, 0)], hr = Terrain.h[j * W + Math.min(i + 1, N)];
+        var hb = Terrain.h[Math.max(j - 1, 0) * W + i], ht = Terrain.h[Math.min(j + 1, N) * W + i];
+        var avg = (hl + hr + hb + ht) * 0.25;
+        sc[k] += (avg - Terrain.h[k]) * clamp(amount * w * 1.6, 0, 1);
+      }
+      var nv = Terrain.base[k] + sc[k];
+      Terrain.h[k] = nv;
+      if (nv < Terrain.min) Terrain.min = nv;
+      if (nv > Terrain.max) Terrain.max = nv;
+    }
+  }
+  updateGroundVerts(Math.max(j0 - 1, 0), Math.min(j1 + 1, N));
+  resnapRegion(cx, cz, r + 1.5);
+}

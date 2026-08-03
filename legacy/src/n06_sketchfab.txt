@@ -1,0 +1,241 @@
+/* ==========================================================================
+   17. SKETCHFAB CLIENT
+   --------------------------------------------------------------------------
+   Search, authenticated download and an IndexedDB cache of the downloaded
+   GLB bytes. The cache is what makes a saved scene reloadable: a scene file
+   stores model UIDs, and reopening it re-hydrates from cache instead of
+   pulling 6 MB per model off the network again.
+
+   The API token lives in localStorage, never in this file — anyone who opens
+   the page can read the source, so a baked-in token would be public.
+   ========================================================================== */
+var SF = {
+  API: 'https://api.sketchfab.com/v3',
+  token: '',
+  db: null,
+  loaderReady: false,
+  cacheIndex: {}
+};
+
+var SF_TOKEN_KEY = 'grasspainter.sketchfab.token';
+
+function sfLoadToken() {
+  try { SF.token = localStorage.getItem(SF_TOKEN_KEY) || ''; } catch (e) { SF.token = ''; }
+  return SF.token;
+}
+function sfSaveToken(t) {
+  SF.token = (t || '').trim();
+  try {
+    if (SF.token) localStorage.setItem(SF_TOKEN_KEY, SF.token);
+    else localStorage.removeItem(SF_TOKEN_KEY);
+  } catch (e) {}
+}
+function sfHeaders() {
+  return SF.token ? { Authorization: 'Token ' + SF.token } : {};
+}
+
+/* ---- GLTFLoader ----------------------------------------------------------
+   Loaded on demand from the last three.js release that shipped a non-module
+   build of it, which is what keeps this page a single dependency-light file. */
+var GLTF_SOURCES = [
+  'https://unpkg.com/three@0.147.0/examples/js/loaders/GLTFLoader.js',
+  'https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js'
+];
+function sfEnsureLoader() {
+  if (SF.loaderReady && THREE.GLTFLoader) return Promise.resolve(true);
+  var i = 0;
+  function attempt() {
+    if (i >= GLTF_SOURCES.length) return Promise.reject(new Error('Could not load the glTF loader'));
+    var src = GLTF_SOURCES[i++];
+    return new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = res; s.onerror = function () { rej(new Error('script')); };
+      document.head.appendChild(s);
+    }).then(function () {
+      if (!THREE.GLTFLoader) throw new Error('missing');
+      SF.loaderReady = true;
+      return true;
+    }, attempt);
+  }
+  return attempt();
+}
+
+/* ---- search --------------------------------------------------------------
+   Face count is capped by default: this is a world builder that instances
+   models hundreds of times, and a 500k-triangle "house" makes that
+   impossible. The cap is exposed in the UI. */
+function sfSearch(opts) {
+  var q = [
+    'type=models',
+    'downloadable=true',
+    'archives_flavours=false',
+    'count=' + (opts.count || 24),
+    'sort_by=' + (opts.sort || '-likeCount')
+  ];
+  if (opts.q) q.push('q=' + encodeURIComponent(opts.q));
+  if (opts.maxFaces) q.push('max_face_count=' + Math.round(opts.maxFaces));
+  if (opts.cursor) q.push('cursor=' + encodeURIComponent(opts.cursor));
+  if (opts.categories) q.push('categories=' + encodeURIComponent(opts.categories));
+  return fetch(SF.API + '/search?' + q.join('&'), { headers: sfHeaders() })
+    .then(function (r) {
+      if (!r.ok) throw new Error('Search failed (' + r.status + ')');
+      return r.json();
+    })
+    .then(function (j) {
+      return {
+        next: j.cursors && j.cursors.next,
+        results: (j.results || []).map(function (m) {
+          var thumb = null;
+          if (m.thumbnails && m.thumbnails.images && m.thumbnails.images.length) {
+            // smallest image at least 128 px wide, else the smallest available
+            var imgs = m.thumbnails.images.slice().sort(function (a, b) { return a.width - b.width; });
+            thumb = imgs[0].url;
+            for (var i = 0; i < imgs.length; i++) if (imgs[i].width >= 128) { thumb = imgs[i].url; break; }
+          }
+          return {
+            uid: m.uid,
+            name: m.name || 'Untitled',
+            author: (m.user && (m.user.displayName || m.user.username)) || 'unknown',
+            faces: m.faceCount || 0,
+            license: (m.license && (m.license.label || m.license.slug)) || '',
+            thumb: thumb,
+            viewer: m.viewerUrl
+          };
+        })
+      };
+    });
+}
+
+/* ---- download ------------------------------------------------------------ */
+function sfDownloadGLB(uid, onProgress) {
+  if (!SF.token) return Promise.reject(new Error('Add your Sketchfab API token first'));
+  return fetch(SF.API + '/models/' + uid + '/download', { headers: sfHeaders() })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) throw new Error('Token rejected by Sketchfab (401/403)');
+      if (!r.ok) throw new Error('Download request failed (' + r.status + ')');
+      return r.json();
+    })
+    .then(function (j) {
+      var entry = j.glb || j.gltf;
+      if (!entry || !entry.url) throw new Error('This model has no glTF download');
+      var isZip = !j.glb;
+      if (isZip) throw new Error('Only glTF binary (.glb) downloads are supported');
+      return fetchWithProgress(entry.url, onProgress);
+    });
+}
+
+/* Streamed fetch so a 6 MB model can show a progress bar instead of hanging. */
+function fetchWithProgress(url, onProgress) {
+  return fetch(url).then(function (r) {
+    if (!r.ok) throw new Error('Asset fetch failed (' + r.status + ')');
+    var total = parseInt(r.headers.get('content-length') || '0', 10);
+    if (!r.body || !r.body.getReader || !total) return r.arrayBuffer();
+    var reader = r.body.getReader(), chunks = [], got = 0;
+    return (function pump() {
+      return reader.read().then(function (res) {
+        if (res.done) {
+          var out = new Uint8Array(got), off = 0;
+          for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], off); off += chunks[i].length; }
+          return out.buffer;
+        }
+        chunks.push(res.value);
+        got += res.value.length;
+        if (onProgress) onProgress(got / total);
+        return pump();
+      });
+    })();
+  });
+}
+
+/* ==========================================================================
+   MODEL CACHE (IndexedDB)
+   ========================================================================== */
+var SFDB_NAME = 'grasspainter-models', SFDB_STORE = 'glb';
+function sfDB() {
+  if (SF.db) return SF.db;
+  SF.db = new Promise(function (resolve) {
+    var idb = window.indexedDB;
+    if (!idb) { resolve(null); return; }
+    var req;
+    try { req = idb.open(SFDB_NAME, 1); } catch (e) { resolve(null); return; }
+    req.onupgradeneeded = function () {
+      var db = req.result;
+      if (!db.objectStoreNames.contains(SFDB_STORE)) db.createObjectStore(SFDB_STORE);
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = req.onblocked = function () { resolve(null); };
+  });
+  return SF.db;
+}
+function sfCachePut(uid, meta, buffer) {
+  return sfDB().then(function (db) {
+    if (!db) return false;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(SFDB_STORE, 'readwrite');
+        tx.objectStore(SFDB_STORE).put({ meta: meta, glb: buffer }, uid);
+        tx.oncomplete = function () { SF.cacheIndex[uid] = meta; resolve(true); };
+        tx.onerror = tx.onabort = function () { resolve(false); };
+      } catch (e) { resolve(false); }
+    });
+  });
+}
+function sfCacheGet(uid) {
+  return sfDB().then(function (db) {
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(SFDB_STORE, 'readonly');
+        var rq = tx.objectStore(SFDB_STORE).get(uid);
+        rq.onsuccess = function () { resolve(rq.result || null); };
+        rq.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+function sfCacheList() {
+  return sfDB().then(function (db) {
+    if (!db) return [];
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(SFDB_STORE, 'readonly');
+        var store = tx.objectStore(SFDB_STORE);
+        var keys = store.getAllKeys ? store.getAllKeys() : null;
+        if (!keys) { resolve([]); return; }
+        keys.onsuccess = function () { resolve(keys.result || []); };
+        keys.onerror = function () { resolve([]); };
+      } catch (e) { resolve([]); }
+    });
+  });
+}
+function sfCacheDelete(uid) {
+  return sfDB().then(function (db) {
+    if (!db) return false;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(SFDB_STORE, 'readwrite');
+        tx.objectStore(SFDB_STORE).delete(uid);
+        tx.oncomplete = function () { delete SF.cacheIndex[uid]; resolve(true); };
+        tx.onerror = function () { resolve(false); };
+      } catch (e) { resolve(false); }
+    });
+  });
+}
+function sfCacheSize() {
+  return sfDB().then(function (db) {
+    if (!db) return 0;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(SFDB_STORE, 'readonly');
+        var rq = tx.objectStore(SFDB_STORE).getAll();
+        rq.onsuccess = function () {
+          var n = 0, all = rq.result || [];
+          for (var i = 0; i < all.length; i++) n += (all[i].glb ? all[i].glb.byteLength : 0);
+          resolve(n);
+        };
+        rq.onerror = function () { resolve(0); };
+      } catch (e) { resolve(0); }
+    });
+  });
+}

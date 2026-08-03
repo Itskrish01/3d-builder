@@ -1,0 +1,328 @@
+/* ==========================================================================
+   14. INPUT
+   ========================================================================== */
+var Cursor = {
+  sx: 0, sy: 0, over: false,
+  world: new THREE.Vector3(), has: false,
+  prev: new THREE.Vector3(), hasPrev: false,
+  vx: 0, vz: 0
+};
+var Ptr = {
+  ids: [],                 // active pointer ids, in order
+  pos: {},                 // id -> {x, y}
+  mode: null,              // 'stroke' | 'orbit' | 'pan' | 'pinch'
+  lastX: 0, lastY: 0,
+  pinchD: 0, pinchX: 0, pinchY: 0,
+  strokeId: -1, primary: -1
+};
+var Keys = {
+  space: false, alt: false, shift: false, ctrl: false, uiHidden: false,
+  move: { f: false, b: false, l: false, r: false, u: false, d: false }
+};
+var _ballVel = { x: 0, z: 0 };
+
+/* Which tool a stroke should use, taking modifier overrides into account. */
+function effectiveTool() {
+  if (Keys.alt) {
+    if (state.tool === 'paint' || state.tool === 'smooth') return 'erase';
+    if (state.tool === 'sculpt') return 'sculpt';   // handled via inverted mode
+  }
+  return state.tool;
+}
+function isPaintTool(t) {
+  return t === 'paint' || t === 'erase' || t === 'smooth' || t === 'eyedropper' || t === 'sculpt';
+}
+
+function bindInput() {
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  canvas.addEventListener('pointerdown', function (e) {
+    canvas.setPointerCapture(e.pointerId);
+    Ptr.ids.push(e.pointerId);
+    Ptr.pos[e.pointerId] = { x: e.clientX, y: e.clientY };
+    Cursor.sx = e.offsetX; Cursor.sy = e.offsetY; Cursor.over = true;
+
+    if (e.pointerType === 'touch' && Ptr.ids.length === 2) {
+      endCurrentStroke();
+      Ptr.mode = 'pinch';
+      var a = Ptr.pos[Ptr.ids[0]], b = Ptr.pos[Ptr.ids[1]];
+      Ptr.pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+      Ptr.pinchX = (a.x + b.x) / 2; Ptr.pinchY = (a.y + b.y) / 2;
+      return;
+    }
+    if (Ptr.ids.length > 1) return;
+
+    Ptr.lastX = e.clientX; Ptr.lastY = e.clientY;
+
+    var tool = effectiveTool();
+    if (e.button === 1) { Ptr.mode = 'pan'; }
+    else if (e.button === 2) { Ptr.mode = (state.tool === 'camera') ? 'pan' : 'orbit'; }
+    else if (e.button === 0) {
+      if (state.tool === 'camera' || Keys.space) { Ptr.mode = 'orbit'; canvas.classList.add('drag'); }
+      else { Ptr.mode = 'stroke'; Ptr.strokeId = e.pointerId; startStroke(tool); }
+    }
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    Cursor.sx = e.offsetX; Cursor.sy = e.offsetY; Cursor.over = true;
+    if (Ptr.pos[e.pointerId]) { Ptr.pos[e.pointerId].x = e.clientX; Ptr.pos[e.pointerId].y = e.clientY; }
+
+    if (Ptr.mode === 'pinch' && Ptr.ids.length >= 2) {
+      var a = Ptr.pos[Ptr.ids[0]], b = Ptr.pos[Ptr.ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if (Ptr.pinchD > 0) cam.dolly(clamp(Ptr.pinchD / Math.max(d, 1), 0.5, 2));
+      cam.pan(mx - Ptr.pinchX, my - Ptr.pinchY);
+      Ptr.pinchD = d; Ptr.pinchX = mx; Ptr.pinchY = my;
+      return;
+    }
+
+    var dx = e.clientX - Ptr.lastX, dy = e.clientY - Ptr.lastY;
+    Ptr.lastX = e.clientX; Ptr.lastY = e.clientY;
+
+    if (Ptr.mode === 'orbit') { cam.orbit(dx, dy); return; }
+    if (Ptr.mode === 'pan') { cam.pan(dx, dy); return; }
+    if (Ptr.mode === 'stroke' && e.pointerId === Ptr.strokeId) {
+      updateCursorWorld();
+      if (Cursor.has) strokeTo(Cursor.world.x, Cursor.world.z);
+    }
+  });
+
+  function up(e) {
+    var i = Ptr.ids.indexOf(e.pointerId);
+    if (i >= 0) Ptr.ids.splice(i, 1);
+    delete Ptr.pos[e.pointerId];
+    try { canvas.releasePointerCapture(e.pointerId); } catch (x) {}
+    canvas.classList.remove('drag');
+    if (Ptr.mode === 'stroke' && e.pointerId === Ptr.strokeId) endCurrentStroke();
+    if (Ptr.ids.length === 0) Ptr.mode = null;
+    else if (Ptr.mode === 'pinch' && Ptr.ids.length === 1) {
+      Ptr.mode = null;
+      var only = Ptr.pos[Ptr.ids[0]];
+      if (only) { Ptr.lastX = only.x; Ptr.lastY = only.y; }
+    }
+  }
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('pointerleave', function () { Cursor.over = false; });
+  canvas.addEventListener('pointerenter', function () { Cursor.over = true; });
+
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    cam.dolly(Math.exp(clamp(e.deltaY, -240, 240) * 0.0013));
+  }, { passive: false });
+
+  /* ---- file picker ---- */
+  document.getElementById('filepick').addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) loadSceneFile(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  /* ---- top bar buttons ---- */
+  document.getElementById('b-undo').onclick = doUndo;
+  document.getElementById('b-redo').onclick = doRedo;
+  document.getElementById('b-save').onclick = saveScene;
+  document.getElementById('b-load').onclick = function () { document.getElementById('filepick').click(); };
+  document.getElementById('b-png').onclick = function () { exportPNG(1); };
+  document.getElementById('b-keys').onclick = showShortcuts;
+  document.getElementById('panel-toggle').onclick = togglePanel;
+  document.getElementById('b-expand').onclick = function () {
+    var any = false;
+    for (var k in UI.sections) if (!UI.sections[k].classList.contains('open')) any = true;
+    for (var k2 in UI.sections) {
+      UI.sections[k2].classList.toggle('open', any);
+      try { localStorage.setItem('grasspainter.sec.' + k2, any ? '1' : '0'); } catch (e) {}
+    }
+  };
+
+  /* ---- keyboard ---- */
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', function (e) {
+    if (e.code === 'Space') Keys.space = false;
+    Keys.alt = e.altKey; Keys.shift = e.shiftKey;
+  });
+  window.addEventListener('blur', function () { Keys.space = Keys.alt = Keys.shift = false; });
+}
+
+function typingInField(e) {
+  var t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
+}
+
+function onKeyDown(e) {
+  Keys.alt = e.altKey; Keys.shift = e.shiftKey;
+  if (e.code === 'Space') { Keys.space = true; if (!typingInField(e)) e.preventDefault(); }
+  if (typingInField(e)) return;
+
+  var mod = e.ctrlKey || e.metaKey;
+  if (mod) {
+    var k = e.key.toLowerCase();
+    if (k === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
+    if (k === 'y') { e.preventDefault(); doRedo(); return; }
+    if (k === 's') { e.preventDefault(); saveScene(); return; }
+    if (k === 'o') { e.preventDefault(); document.getElementById('filepick').click(); return; }
+    if (k === 'p') { e.preventDefault(); exportPNG(1); return; }
+    if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); askClear(); return; }
+    return;
+  }
+
+  switch (e.key) {
+    case 'b': case 'B': setTool('paint'); return;
+    case 'e': case 'E': setTool('erase'); return;
+    case 's': case 'S': if (e.shiftKey) return; setTool('smooth'); return;
+    case 'i': case 'I': setTool('eyedropper'); return;
+    case 't': case 'T': setTool('sculpt'); return;
+    case 'o': case 'O': setTool('ball'); return;
+    case 'v': case 'V': setTool('camera'); return;
+    case 'f': cam.frame(state.plate.width, state.plate.depth, Terrain.max); return;
+    case 'F': fillPlate(); return;
+    case 'g': case 'G':
+      state.plate.grid = !state.plate.grid; syncGroundUniforms(); refreshUI(); markSceneDirty(); return;
+    case '[': nudgeRadius(-1); return;
+    case ']': nudgeRadius(1); return;
+    case 'h': case 'H': toggleUI(); return;
+    case 'Tab': e.preventDefault(); togglePanel(); return;
+    case '?': showShortcuts(); return;
+    case 'Escape': closeModal(); return;
+  }
+  if (e.key >= '1' && e.key <= '6') applyPreset(parseInt(e.key, 10) - 1);
+}
+
+function nudgeRadius(dir) {
+  var r = state.brush.radius;
+  var step = Math.max(0.1, r * 0.18);
+  state.brush.radius = clamp(r + dir * step, 0.25, 24);
+  refreshUI();
+  markSceneDirty();
+}
+/* Below this width the panel is a drawer that slides over the world; above it
+   the panel is part of the layout. The number has to be the one the stylesheet
+   uses, so it is read from the same media query rather than written twice. */
+var PANEL_DRAWER = window.matchMedia('(max-width:1120px)');
+function togglePanel() {
+  var p = document.getElementById('panel');
+  if (PANEL_DRAWER.matches) {
+    var open = p.classList.toggle('open');
+    p.classList.remove('closed');
+    if (!open) p.classList.add('closed');
+  } else {
+    p.classList.remove('open');
+    p.classList.toggle('closed');
+  }
+}
+function toggleUI() {
+  Keys.uiHidden = !Keys.uiHidden;
+  ['topbar', 'rail', 'panel', 'panel-toggle', 'hint'].forEach(function (id) {
+    var e = document.getElementById(id);
+    if (e) e.style.display = Keys.uiHidden ? 'none' : '';
+  });
+  resize();
+}
+
+/* ==========================================================================
+   STROKES
+   ========================================================================== */
+var _strokeTool = 'paint', _lastStampTime = 0;
+
+function startStroke(tool) {
+  _strokeTool = tool;
+  updateCursorWorld();
+  if (!Cursor.has) { Ptr.mode = null; return; }
+  Brush.hasLast = false;
+  Brush.leftover = 0;
+  Brush.start.copy(Cursor.world);
+  Brush.axis = 0;
+  _lastStampTime = nowMs();
+
+  if (tool === 'eyedropper') { eyedrop(Cursor.world.x, Cursor.world.z); Ptr.mode = null; return; }
+  if (state.tool === 'ball') {
+    moveBall(Cursor.world.x, Cursor.world.z);
+    return;
+  }
+  beginStroke(tool === 'erase' ? 'Erase' : tool === 'smooth' ? 'Smooth' :
+              tool === 'sculpt' ? 'Sculpt' : 'Paint');
+  strokeAt(Cursor.world.x, Cursor.world.z);
+  Brush.last.copy(Cursor.world);
+  Brush.hasLast = true;
+}
+
+function endCurrentStroke() {
+  if (Ptr.mode !== 'stroke') return;
+  if (_strokeTool !== 'eyedropper' && state.tool !== 'ball') endStroke();
+  Brush.hasLast = false;
+  Ptr.mode = null;
+  Ptr.strokeId = -1;
+  updateBladeMeter();
+}
+
+/* Interpolate along the stroke so a fast drag never leaves gaps. */
+function strokeTo(x, z) {
+  if (state.tool === 'ball') { moveBall(x, z); return; }
+  if (_strokeTool === 'eyedropper') return;
+
+  if (Keys.shift) {
+    if (!Brush.axis) {
+      var ax = Math.abs(x - Brush.start.x), az = Math.abs(z - Brush.start.z);
+      if (Math.max(ax, az) > state.brush.radius * 0.4) Brush.axis = ax > az ? 1 : 2;
+    }
+    if (Brush.axis === 1) z = Brush.start.z;
+    else if (Brush.axis === 2) x = Brush.start.x;
+  } else Brush.axis = 0;
+
+  var spacing = state.brush.radius * (_strokeTool === 'paint' ? 0.2 : 0.34);
+  if (!Brush.hasLast) { strokeAt(x, z); Brush.last.set(x, 0, z); Brush.hasLast = true; return; }
+
+  var dx = x - Brush.last.x, dz = z - Brush.last.z;
+  var dist = Math.sqrt(dx * dx + dz * dz);
+  if (dist < 1e-6) return;
+  var travel = dist + Brush.leftover;
+  var steps = Math.floor(travel / spacing);
+  if (steps > 400) steps = 400;                    // sanity cap on a huge jump
+  var ux = dx / dist, uz = dz / dist;
+  var walked = spacing - Brush.leftover;
+  for (var s = 0; s < steps; s++) {
+    strokeAt(Brush.last.x + ux * walked, Brush.last.z + uz * walked);
+    walked += spacing;
+  }
+  Brush.leftover = travel - steps * spacing;
+  Brush.last.set(x, 0, z);
+}
+
+function strokeAt(x, z) {
+  var now = nowMs();
+  var dt = clamp((now - _lastStampTime) / 1000, 0.001, 0.1);
+  _lastStampTime = now;
+  var t = _strokeTool;
+  if (t === 'paint') paintStamp(x, z, 1);
+  else if (t === 'erase') Brush.eraseQueue.push({ x: x, z: z, r: state.brush.radius, r2: state.brush.radius * state.brush.radius, p: state.brush.flow * 1.4 + 0.25 });
+  else if (t === 'smooth') smoothStamp(x, z, dt);
+  else if (t === 'sculpt') {
+    var m = state.brush.sculpt, inv = Keys.alt;
+    if (inv) state.brush.sculpt = (m === 'raise') ? 'lower' : (m === 'lower' ? 'raise' : m);
+    sculptStamp(x, z, dt);
+    state.brush.sculpt = m;
+  }
+}
+
+function moveBall(x, z) {
+  var r = state.interact.ballRadius;
+  _ballVel.x = x - ball.position.x;
+  _ballVel.z = z - ball.position.z;
+  ball.position.set(x, heightAt(x, z) + r, z);
+}
+
+/* Re-project the last screen position onto the ground every frame, so the
+   brush preview stays correct while the camera moves. */
+function updateCursorWorld() {
+  screenRay(Cursor.sx, Cursor.sy);
+  Cursor.prev.copy(Cursor.world);
+  var hit = raycastGround(_rayO, _rayD, Cursor.world);
+  if (hit) {
+    if (Cursor.has) { Cursor.vx = Cursor.world.x - Cursor.prev.x; Cursor.vz = Cursor.world.z - Cursor.prev.z; }
+    Cursor.has = true;
+  } else {
+    Cursor.has = false; Cursor.vx = Cursor.vz = 0;
+  }
+  return Cursor.has;
+}

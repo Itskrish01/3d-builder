@@ -1,0 +1,263 @@
+/* ==========================================================================
+   23. PEOPLE, PATHS AND TRAFFIC
+   --------------------------------------------------------------------------
+   Actors are ordinary world objects with a route attached. Their positions are
+   solved on the CPU (a hundred of them is nothing) while the walk cycle and
+   wheel spin run in the vertex shader, so they stay in the same instanced
+   draw call as every other prop.
+   ========================================================================== */
+var Paths = { nextId: 1 };
+
+/* The library is whatever has been imported, so actors ask for a kind by
+   category rather than by a hard-coded model name. */
+function kindsOfType(t) {
+  var out = [];
+  for (var id in ASSETS) if (ASSETS[id].kind === t) out.push(id);
+  return out;
+}
+function pickKind(t, preferred) {
+  if (preferred && ASSETS[preferred] && ASSETS[preferred].kind === t) return preferred;
+  var list = kindsOfType(t);
+  return list.length ? list[(rnd() * list.length) | 0] : null;
+}
+
+function newPath(pts) {
+  return { id: Paths.nextId++, pts: pts.slice(), _dirty: true };
+}
+function pathById(id) {
+  for (var i = 0; i < World.paths.length; i++) if (World.paths[i].id === id) return World.paths[i];
+  return null;
+}
+function serPath(p) {
+  return { i: p.id, p: p.pts.map(function (q) { return [+q.x.toFixed(2), +q.z.toFixed(2)]; }) };
+}
+function addPathRecord(r) {
+  var p = { id: r.i, pts: r.p.map(function (q) { return { x: q[0], z: q[1] }; }), _dirty: true };
+  World.paths.push(p);
+  if (Paths.nextId <= p.id) Paths.nextId = p.id + 1;
+  return p;
+}
+
+/* Sample a walking path. Points close to a road are pulled onto its pavement,
+   which is what makes "draw a path near the street" produce pedestrians
+   walking on the sidewalk rather than through the traffic lane. */
+function pathSamples(path) {
+  if (path._s && !path._dirty) return path._s;
+  var pts = path.pts;
+  if (pts.length < 2) { path._s = []; path._dirty = false; return path._s; }
+  var out = [], dist = 0, px = 0, pz = 0;
+  for (var s = 0; s < pts.length - 1; s++) {
+    var approx = Math.hypot(pts[s + 1].x - pts[s].x, pts[s + 1].z - pts[s].z);
+    var steps = clamp(Math.ceil(approx / 1.1), 2, 80);
+    for (var i = 0; i < steps; i++) {
+      var q = splinePoint(pts, s + i / steps);
+      var x = q.x, z = q.z;
+      var near = nearestRoadPoint(x, z, 14);
+      if (near && near.road.type !== 'river') {
+        var walkOff = near.road.width * 0.5 + (near.road.swL || near.road.swR ? near.road.swW * 0.5 : 0.8);
+        var dx = x - near.px, dz = z - near.pz;
+        var d = Math.hypot(dx, dz);
+        if (d < walkOff + 3.5) {
+          x = near.px + near.nx * walkOff;
+          z = near.pz + near.nz * walkOff;
+        }
+      }
+      if (out.length) dist += Math.hypot(x - px, z - pz);
+      px = x; pz = z;
+      out.push({ x: x, z: z, d: dist });
+    }
+  }
+  for (var k = 0; k < out.length; k++) {
+    var a = out[Math.max(k - 1, 0)], b = out[Math.min(k + 1, out.length - 1)];
+    var tx = b.x - a.x, tz = b.z - a.z, l = Math.hypot(tx, tz) || 1;
+    out[k].tx = tx / l; out[k].tz = tz / l;
+  }
+  path._s = out; path._dirty = false;
+  path.length = dist;
+  return out;
+}
+function pathPose(path, dist) {
+  var s = pathSamples(path);
+  if (s.length < 2) return null;
+  var total = s[s.length - 1].d;
+  var d = ((dist % total) + total) % total;
+  var lo = 0, hi = s.length - 1;
+  while (lo < hi - 1) { var mid = (lo + hi) >> 1; if (s[mid].d < d) lo = mid; else hi = mid; }
+  var a = s[lo], b = s[hi];
+  var t = (b.d - a.d) > 1e-6 ? (d - a.d) / (b.d - a.d) : 0;
+  return {
+    x: lerp(a.x, b.x, t), z: lerp(a.z, b.z, t),
+    tx: lerp(a.tx, b.tx, t), tz: lerp(a.tz, b.tz, t), total: total
+  };
+}
+
+/* ---- populate ------------------------------------------------------------ */
+function addPeopleToPath(path, count) {
+  var cfg = state.people, added = [];
+  var s = pathSamples(path);
+  if (s.length < 2) return added;
+  var total = s[s.length - 1].d;
+  for (var i = 0; i < count; i++) {
+    // stagger both the start offset and the speed so nobody marches in step
+    var t0 = (i / count) * total + rnd() * total * 0.06;
+    var pose = pathPose(path, t0);
+    var lane = (rnd() - 0.5) * cfg.pathWidth;
+    var kind = pickKind('person', state.people.place);
+    if (!kind) break;
+    var o = addObject(kind, pose.x - pose.tz * lane, pose.z + pose.tx * lane, {
+      rotY: Math.atan2(pose.tx, pose.tz),
+      scale: lerp(0.92, 1.1, rnd()), align: 0
+    });
+    if (!o) continue;
+    o.pathId = path.id;
+    o.t = t0;
+    o.lane = lane;
+    o.speed = Math.max(0.25, cfg.speed * (1 + (rnd() - 0.5) * cfg.speedVar * 2));
+    o.rate = 2.2 + rnd() * 0.8;
+    o.phase = rnd() * TAU;
+    updateObject(o);
+    added.push(o);
+  }
+  return added;
+}
+
+function addVehiclesToRoad(rd, count) {
+  var cfg = state.traffic, added = [];
+  var s = roadSamples(rd);
+  if (s.length < 2 || rd.type === 'river' || rd.type === 'foot') return added;
+  var total = s[s.length - 1].d;
+  for (var i = 0; i < count; i++) {
+    var dir = (i % 2) ? -1 : 1;
+    var t0 = (i / Math.max(1, count)) * total + rnd() * cfg.spacing * 0.4;
+    var lane = rd.width * 0.24 * dir;
+    var kind = pickKind('vehicle');
+    if (!kind) break;
+    var pose = roadPose(rd, t0, lane);
+    if (!pose) continue;
+    var o = addObject(kind, pose.x, pose.z, {
+      rotY: Math.atan2(pose.tx * dir, pose.tz * dir), scale: 1, align: 0
+    });
+    if (!o) continue;
+    o.roadId = rd.id;
+    o.t = t0;
+    o.dir = dir;
+    o.lane = lane;
+    o.speed = Math.max(1, cfg.speed * (1 + (rnd() - 0.5) * cfg.speedVar * 2));
+    o.rate = 0;
+    o.yOff = 0.02;
+    updateObject(o);
+    added.push(o);
+  }
+  return added;
+}
+
+/* One click fills every road with a believable mix of traffic and pedestrians
+   walking the pavements beside it. */
+function populateWorld(density) {
+  var added = [], i;
+  beginStroke('Populate');
+  var budget = Q().anim;
+  var roads = World.roads.filter(function (r) { return r.type !== 'river'; });
+  for (i = 0; i < roads.length && added.length < budget; i++) {
+    var rd = roads[i];
+    var s = roadSamples(rd);
+    if (s.length < 2) continue;
+    var len = s[s.length - 1].d;
+
+    if (rd.type !== 'foot') {
+      var cars = Math.max(0, Math.round(len / Math.max(6, state.traffic.spacing) * density));
+      added = added.concat(addVehiclesToRoad(rd, Math.min(cars, 24)));
+    }
+    // pedestrians follow a path that traces the road, so pathSamples() snaps
+    // them onto the pavement automatically
+    var pp = newPath(rd.pts.slice());
+    World.paths.push(pp);
+    var peds = Math.max(1, Math.round(len / 14 * density * 2));
+    added = added.concat(addPeopleToPath(pp, Math.min(peds, 40)));
+  }
+  if (added.length) recordObjAdd(added);
+  endStroke();
+  markSceneDirty();
+  return added.length;
+}
+
+/* ---- per-frame update ---------------------------------------------------- */
+var _actorQ = new THREE.Quaternion();
+function updateActors(dt) {
+  if (!state.world.simulate) return;
+  var sim = dt;
+  for (var i = 0; i < World.objs.length; i++) {
+    var o = World.objs[i];
+
+    if (o.pathId) {
+      var path = pathById(o.pathId);
+      if (!path) { o.pathId = null; continue; }
+      o.t += o.speed * sim;
+      var ps = pathPose(path, o.t);
+      if (!ps) continue;
+      var lane = isFinite(o.lane) ? o.lane : 0;
+      o.x = ps.x - ps.tz * lane;
+      o.z = ps.z + ps.tx * lane;
+      o.rotY = Math.atan2(ps.tx, ps.tz);
+      o.y = heightAt(o.x, o.z);
+      ogridMove(o);
+      updateObject(o);
+
+    } else if (o.roadId !== undefined && o.roadId !== null) {
+      var rd = roadById(o.roadId);
+      if (!rd) { o.roadId = null; continue; }
+      o.t += o.speed * sim * o.dir;
+      if (!isFinite(o.lane)) o.lane = rd.width * 0.24 * (o.dir > 0 ? 1 : -1);
+      var rs = roadPose(rd, o.t, o.lane);
+      if (!rs) continue;
+      // reached an end: turn onto a connected road, or reverse if it is a dead end
+      if (o.t > rs.total || o.t < 0) {
+        var atEnd = o.t > rs.total;
+        var next = pickNextRoad(rd, atEnd);
+        if (next) {
+          o.roadId = next.rd.id;
+          var ns = roadSamples(next.rd);
+          var nlen = ns.length ? ns[ns.length - 1].d : 0;
+          o.dir = next.dir;
+          o.t = next.dir > 0 ? 0.5 : nlen - 0.5;
+          o.lane = next.rd.width * 0.24 * (next.dir > 0 ? 1 : -1);
+        } else {
+          o.dir = -o.dir;
+          o.t = clamp(o.t, 0.5, rs.total - 0.5);
+          o.lane = -o.lane;
+        }
+        continue;
+      }
+      o.x = rs.x; o.z = rs.z;
+      o.y = rs.y + o.yOff;
+      o.rotY = Math.atan2(rs.tx * o.dir, rs.tz * o.dir);
+      ogridMove(o);
+      updateObject(o);
+    }
+  }
+}
+
+/* Sitting / standing people placed by hand still need to face somewhere
+   sensible, and props with a spin (windmills) need a non-zero rate. */
+function placePerson(x, z, pose) {
+  var cfg = state.people;
+  var kind = pickKind('person', state.people.place);
+  if (!kind) { toast('Import a character model first', 'err'); return null; }
+  var o = addObject(kind, x, z, {
+    rotY: rnd() * TAU, scale: lerp(0.92, 1.1, rnd()), align: 0
+  });
+  if (!o) return null;
+  o.rate = 1.4;
+  o.y = heightAt(x, z) + o.yOff;
+  updateObject(o);
+  return o;
+}
+
+function actorCount() {
+  var n = 0;
+  for (var i = 0; i < World.objs.length; i++) {
+    var o = World.objs[i];
+    if (o.pathId || (o.roadId !== undefined && o.roadId !== null)) n++;
+  }
+  return n;
+}

@@ -1,0 +1,196 @@
+/* ==========================================================================
+   THE GRASS STATION
+   --------------------------------------------------------------------------
+   Every panel builder takes two hosts: `main` is what you see, `more` is what
+   appears when you open "All settings". Nothing is deleted — it is sorted by
+   how often a person actually reaches for it.
+   ========================================================================== */
+function panelGrass(main, more) {
+  toolRow(main, 'grass');
+
+  var b = addGroup(main, 'Brush');
+  addSlider(b, { label: 'Brush size', path: 'brush.radius', min: 0.25, max: 40, step: 0.05, dec: 1, unit: ' m',
+    tip: 'How wide a patch each drag covers.', key: '[  ]' });
+
+  b = addGroup(main, 'Look');
+  addChips(b, {
+    options: PRESETS.map(function (p, i) { return { value: i, label: p.name, swatch: p.swatch,
+      tip: 'Change the grass, wind and light to the ' + p.name + ' look. Grass you have already painted stays put.' }; }),
+    onChange: function (i) { applyPreset(i); }
+  });
+  addSlider(b, { label: 'Blade height', path: 'grass.height', min: 0.05, max: 5, step: 0.01, dec: 2, unit: ' m',
+    tip: 'How tall new and existing blades stand.', apply: ['grass'] });
+  addColor(b, { label: 'Tip colour', path: 'grass.tipColor', tip: 'The colour at the top of every blade.', apply: ['grass'] });
+  addColor(b, { label: 'Root colour', path: 'grass.baseColor', tip: 'The colour down at the soil.', apply: ['grass'] });
+
+  b = addGroup(main, 'Wind');
+  addDial(b, { label: 'Direction', path: 'wind.direction',
+    tip: 'Drag the dial to point the wind somewhere else. Hold Shift to snap to 15° steps.', apply: ['grass'],
+    extra: function (host) {
+      addSlider(host, { label: 'Strength', path: 'wind.strength', min: 0, max: 2.5, step: 0.01, dec: 2,
+        tip: 'How far the blades lean downwind.', apply: ['grass'] });
+    } });
+
+  b = addGroup(main, 'The whole field');
+  addButtons(b, [
+    { label: 'Fill everywhere', kind: 'pri', key: 'Shift F',
+      tip: 'Cover the whole world with grass, skipping water, roads and cliffs.',
+      icon: '<path d="M4 20h16"/><path d="M7 20V9M12 20V5M17 20v-8"/>', run: fillPlate },
+    { label: 'Clear', kind: 'dgr', key: 'Ctrl Shift Del',
+      tip: 'Remove every blade. You will be asked first, and Ctrl+Z brings it back.',
+      icon: '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>', run: askClear }
+  ]);
+  var meterLabel = el('div', 'note');
+  var meter = el('div', 'meter');
+  var meterFill = el('i');
+  meter.appendChild(meterFill);
+  b.appendChild(meter); b.appendChild(meterLabel);
+  meterLabel.style.marginTop = '8px';
+  UI.meter = { label: meterLabel, bar: meter, fill: meterFill };
+  updateBladeMeter();
+
+  /* ---------------- all settings ---------------- */
+  var m = addGroup(more, 'Brush');
+  addSlider(m, { label: 'How much per stroke', path: 'brush.flow', min: 0.02, max: 1, step: 0.01, dec: 2,
+    tip: 'How many blades each stamp tries to plant. Higher fills an area faster.' });
+  addSlider(m, { label: 'Edge softness', path: 'brush.falloff', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: '0 fades out gradually from the middle, 1 is a crisp circular cut.' });
+  addSlider(m, { label: 'Scatter', path: 'brush.scatter', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: '0 snaps blades to a tidy lattice, 1 is fully natural scatter.' });
+  addSlider(m, { label: 'Crowding limit', path: 'brush.maxDensity', min: 5, max: 400, step: 1, dec: 0, unit: '/m²',
+    tip: 'A stroke stops adding blades to a spot once it reaches this many per square metre.', apply: ['dens'] });
+  addSlider(m, { label: 'Random lean', path: 'brush.tilt', min: 0, max: 0.8, step: 0.01, dec: 2,
+    tip: 'How far each blade may lean away from straight up when it is planted.' });
+  addSlider(m, { label: 'Steepest ground grass grows on', path: 'plate.maxGrassSlope', min: 0, max: 0.98, step: 0.01, dec: 2,
+    tip: 'Blades refuse to grow where the ground tips past this — it keeps grass off cliff faces.' });
+
+  m = addGroup(more, 'Blade shape');
+  addSlider(m, { label: 'Height variation', path: 'grass.heightVar', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'How much taller or shorter than average each new blade can be.' });
+  addSlider(m, { label: 'Width', path: 'grass.width', min: 0.005, max: 0.4, step: 0.001, dec: 3, unit: ' m',
+    tip: 'Blade width at the root.', apply: ['grass'] });
+  addSlider(m, { label: 'Width variation', path: 'grass.widthVar', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Random spread of blade width at paint time.' });
+  addSlider(m, { label: 'Taper', path: 'grass.taper', min: 0.2, max: 3, step: 0.01, dec: 2,
+    tip: 'How quickly the blade narrows to the tip. Low stays broad, high goes needle-like.', apply: ['grass'] });
+  addSlider(m, { label: 'Droop', path: 'grass.curve', min: 0, max: 2, step: 0.01, dec: 2,
+    tip: 'How far the blade curls over with no wind.', apply: ['grass'] });
+  addSlider(m, { label: 'Droop variation', path: 'grass.curveVar', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Random spread of resting droop at paint time.' });
+  addSlider(m, { label: 'Smoothness', path: 'grass.segments', min: 3, max: 7, step: 1, dec: 0,
+    tip: 'Points along each blade. Higher looks smoother and costs more.', apply: ['template'] });
+  addSlider(m, { label: 'Cross-blade curl', path: 'grass.bladeCurl', min: 0, max: 1.4, step: 0.01, dec: 2,
+    tip: 'Curvature across the width of the blade — this is what makes the highlight run down the middle.', apply: ['grass'] });
+
+  m = addGroup(more, 'Colour');
+  addSlider(m, { label: 'Where root meets tip', path: 'grass.gradPow', min: 0.3, max: 4, step: 0.01, dec: 2,
+    tip: 'High values keep the root colour for longer up the blade.', apply: ['grass'] });
+  addSlider(m, { label: 'Hue variation', path: 'grass.hueVar', min: 0, max: 0.5, step: 0.005, dec: 3,
+    tip: 'Per-blade random hue shift.', apply: ['grass'] });
+  addSlider(m, { label: 'Saturation variation', path: 'grass.satVar', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Per-blade random saturation shift.', apply: ['grass'] });
+  addSlider(m, { label: 'Brightness variation', path: 'grass.valVar', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Per-blade random brightness shift.', apply: ['grass'] });
+  addSlider(m, { label: 'Shade at the base', path: 'grass.ao', min: 0, max: 1, step: 0.01, dec: 2,
+    tip: 'Darkening toward the bottom of each blade. It is what grounds the field.', apply: ['grass'] });
+  addSlider(m, { label: 'Backlight glow', path: 'grass.translucency', min: 0, max: 3, step: 0.01, dec: 2,
+    tip: 'How much light passes through a blade when the sun is behind it.', apply: ['grass'] });
+  addSlider(m, { label: 'Sheen', path: 'grass.specular', min: 0, max: 1.5, step: 0.01, dec: 2,
+    tip: 'Strength of the highlight.', apply: ['grass'] });
+  addSlider(m, { label: 'Sheen spread', path: 'grass.roughness', min: 0.02, max: 1, step: 0.01, dec: 2,
+    tip: 'Low is glossy, high is matte.', apply: ['grass'] });
+
+  m = addGroup(more, 'Field');
+  addSlider(m, { label: 'How thick it looks', path: 'grass.density', min: 0.02, max: 1, step: 0.01, dec: 2,
+    tip: 'Draws only a fraction of the blades you painted. Thins the field without deleting anything.', apply: ['grass'] });
+  addSlider(m, { label: 'Softest blades', path: 'grass.stiffMin', min: 0.15, max: 3, step: 0.01, dec: 2,
+    tip: 'Soft blades bend much further in the same wind.' });
+  addSlider(m, { label: 'Stiffest blades', path: 'grass.stiffMax', min: 0.15, max: 3, step: 0.01, dec: 2,
+    tip: 'A wide soft-to-stiff range is what stops the field moving as one mass.' });
+
+  m = addGroup(more, 'Wind detail');
+  addSlider(m, { label: 'Speed', path: 'wind.speed', min: 0, max: 2, step: 0.01, dec: 2,
+    tip: 'How fast the wind pattern scrolls across the world.', apply: ['grass'] });
+  addSlider(m, { label: 'Turbulence', path: 'wind.turbulence', min: 0, max: 2, step: 0.01, dec: 2,
+    tip: 'Chaos: jitters the local direction and flutters the tips.', apply: ['grass'] });
+  addSlider(m, { label: 'Wave size', path: 'wind.waveScale', min: 0.005, max: 0.4, step: 0.001, dec: 3,
+    tip: 'Low values make long, broad swells.', apply: ['grass'] });
+  addSlider(m, { label: 'Gusts across the field', path: 'wind.gustFreq', min: 0.01, max: 0.7, step: 0.005, dec: 3,
+    tip: 'Low values give one big sweeping wave.', apply: ['grass'] });
+  addSlider(m, { label: 'Gust strength', path: 'wind.gustStrength', min: 0, max: 3, step: 0.01, dec: 2,
+    tip: 'How hard the gust front bends the grass as it passes.', apply: ['grass'] });
+  addSlider(m, { label: 'Gust speed', path: 'wind.gustSpeed', min: 0, max: 6, step: 0.01, dec: 2,
+    tip: 'How quickly the gust front travels.', apply: ['grass'] });
+
+  m = addGroup(more, 'Grass that reacts to you');
+  addNote(m, 'The blades part around your cursor. These decide how that feels.');
+  addSlider(m, { label: 'How far it parts', path: 'interact.radius', min: 0.3, max: 12, step: 0.05, dec: 2, unit: ' m',
+    tip: 'How far from the cursor the grass is pushed aside.' });
+  addSlider(m, { label: 'How hard', path: 'interact.strength', min: 0, max: 4, step: 0.01, dec: 2,
+    tip: 'How far the grass is bent away from the cursor.' });
+  addSlider(m, { label: 'Spring back', path: 'interact.recovery', min: 0.5, max: 20, step: 0.1, dec: 1,
+    tip: 'Higher springs back faster.' });
+  addSlider(m, { label: 'Wobble', path: 'interact.damping', min: 0.08, max: 1.6, step: 0.01, dec: 2,
+    tip: 'Below 1 the grass overshoots and wobbles on the way back; at 1 it settles without bouncing.' });
+  addSlider(m, { label: 'Drag behind', path: 'interact.wake', min: 0, max: 2, step: 0.01, dec: 2,
+    tip: 'How much the grass is pulled along the way the cursor is travelling.' });
+  addToggle(m, { label: 'Show the ball', path: 'interact.ball', tip: 'A ball you can drag through the grass.' });
+  addSlider(m, { label: 'Ball size', path: 'interact.ballRadius', min: 0.2, max: 6, step: 0.05, dec: 2, unit: ' m',
+    tip: 'How big the ball is.' });
+}
+
+function updateBladeMeter() {
+  if (!UI.meter || !UI.meter.label.isConnected) return;
+  var f = Grass.count / MAX_BLADES;
+  UI.meter.label.textContent = fmtInt(Grass.count) + ' blades — room for ' + fmtInt(MAX_BLADES);
+  UI.meter.fill.style.width = (clamp(f, 0, 1) * 100).toFixed(1) + '%';
+  UI.meter.bar.classList.toggle('warn', f > 0.9);
+}
+
+function askClear() {
+  confirmDialog('Clear all the grass?',
+    'This removes all ' + fmtInt(Grass.count) + ' blades. Ctrl+Z brings them back.',
+    'Clear the grass', clearAll);
+}
+
+/* ==========================================================================
+   HELP — the tour, and the full shortcut list for people who want it
+   ========================================================================== */
+var SHORTCUTS = [];
+
+function showHelp() {
+  openModal('Help', function (body) {
+    body.appendChild(el('p', null,
+      'Grass Painter has four stations down the left. Pick one, then work directly on the ground.'));
+    addButtons(body, [
+      { label: 'Take the tour', kind: 'pri', icon: '<path d="M12 21s7-5.5 7-11a7 7 0 0 0-14 0c0 5.5 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
+        tip: 'Walk through the whole tool, one station at a time.',
+        run: function () { closeModal(); startTour(0); } },
+      { label: 'Keyboard shortcuts', icon: '<rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+        tip: 'Every key the tool listens for.',
+        run: function () { closeModal(); showShortcuts(); } }
+    ]);
+  }, []);
+}
+
+function showShortcuts() {
+  openModal('Keyboard shortcuts', function (body) {
+    body.appendChild(el('p', null,
+      'Sliders take a drag anywhere along the track, Shift-drag for fine control, a double-click to reset, and typed numbers.'));
+    var g = el('div', 'keys');
+    SHORTCUTS.forEach(function (group) {
+      var col = el('div');
+      col.appendChild(el('h4', null, group[0]));
+      var dl = el('dl');
+      group[1].forEach(function (row) {
+        var dt = el('dt');
+        row[0].split(/\s+/).forEach(function (k) { dt.appendChild(el('kbd', null, k)); });
+        dl.appendChild(dt);
+        dl.appendChild(el('dd', null, row[1]));
+      });
+      col.appendChild(dl);
+      g.appendChild(col);
+    });
+    body.appendChild(g);
+  }, [{ label: 'Done', kind: 'pri' }], { wide: true });
+}

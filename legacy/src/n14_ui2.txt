@@ -1,0 +1,479 @@
+/* ==========================================================================
+   25. ICONS, THUMBNAILS, LAYER LIST, THE TOUR AND THE TOP BAR
+   ========================================================================== */
+
+var ICON = {
+  raise:   '<path d="M12 20V6"/><path d="m5 12 7-7 7 7"/><path d="M3 22h18"/>',
+  lower:   '<path d="M12 4v14"/><path d="m5 12 7 7 7-7"/><path d="M3 22h18"/>',
+  smooth:  '<path d="M3 14c3 0 3-6 6-6s3 6 6 6 3-6 6-6"/><path d="M3 20h18"/>',
+  flatten: '<path d="M3 10h18"/><path d="M6 16h12"/><path d="M3 20h18"/>',
+  ramp:    '<path d="M3 20h18"/><path d="M4 18 18 6"/><path d="M18 6v12"/>',
+  noise:   '<path d="m3 17 3-6 3 4 3-8 3 10 3-5 3 5"/>',
+  erode:   '<path d="M4 5v6c0 5 3 8 8 8s8-3 8-8V5"/><path d="M8 5v5M16 5v5"/>',
+  place:   '<path d="M12 21s7-5.5 7-11a7 7 0 0 0-14 0c0 5.5 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
+  brush:   '<path d="M9.5 14.5 3 21"/><path d="m6 18 1.6-4.2a3 3 0 0 1 .7-1.1l7-7a2.1 2.1 0 0 1 3 0l1 1a2.1 2.1 0 0 1 0 3l-7 7a3 3 0 0 1-1.1.7Z"/>',
+  scatter: '<circle cx="6" cy="7" r="2"/><circle cx="17" cy="5.5" r="1.6"/><circle cx="12" cy="13" r="2.2"/><circle cx="19" cy="16" r="1.8"/><circle cx="6.5" cy="18" r="1.7"/>',
+  eraser:  '<path d="m5.5 14.5 4 4h9"/><path d="M13.4 3.6 3.6 13.4a2 2 0 0 0 0 2.8l4.2 4.2a2 2 0 0 0 2.8 0l9.8-9.8a2 2 0 0 0 0-2.8l-4.2-4.2a2 2 0 0 0-2.8 0Z"/>',
+  dropper: '<path d="m11 9 4 4"/><path d="M17.5 2.5a2.1 2.1 0 0 1 3 3l-1.9 1.9 1 1a1.5 1.5 0 0 1 0 2.1l-.7.7-5.1-5.1.7-.7a1.5 1.5 0 0 1 2.1 0l1-1Z"/><path d="m13.8 8.2-8 8a2 2 0 0 0-.5.9L4.5 20l3-.8a2 2 0 0 0 .9-.5l8-8"/>',
+  arrow:   '<path d="m4 4 7 16 2.2-6.8L20 11Z"/>',
+  eye:     '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.6"/>',
+  eyeoff:  '<path d="M4 4 20 20"/><path d="M9.9 5.7A9.6 9.6 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a17 17 0 0 1-3.3 4"/><path d="M6.3 8A17 17 0 0 0 2 12s3.6 6.5 10 6.5a9.9 9.9 0 0 0 3.5-.6"/>',
+  lock:    '<rect x="4.5" y="10" width="15" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  unlock:  '<rect x="4.5" y="10" width="15" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 7.5-1.9"/>',
+  check:   '<path d="m4 12 5 5L20 6"/>',
+  plus:    '<path d="M12 5v14M5 12h14"/>',
+  play:    '<path d="M7 4.5v15l13-7.5Z"/>',
+  pause:   '<path d="M8 4.5v15M16 4.5v15"/>',
+  wand:    '<path d="m5 19 9-9"/><path d="m15 5 1.2 2.8L19 9l-2.8 1.2L15 13l-1.2-2.8L11 9l2.8-1.2Z"/><path d="M4 5h2M5 4v2M18 17h2M19 16v2"/>',
+  trash:   '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>',
+  copy:    '<rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  frame:   '<path d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"/>',
+  people:  '<circle cx="9" cy="6" r="3"/><path d="M3 21v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2"/><path d="M17 8.5a2.5 2.5 0 1 0 0-5"/><path d="M17 13a4 4 0 0 1 4 4v4"/>'
+};
+var FRAME_ICON = ICON.frame;
+
+/* --------------------------------------------------------------------------
+   STATION GLYPHS — the signature.
+   Every one is drawn in the same 44×26 frame with the same ground line at
+   y = 21, so the four stations stack into strata of one continuous ground:
+   whichever one you are at, you are working on the same piece of earth.
+   -------------------------------------------------------------------------- */
+function stationGlyph(form) {
+  return '<svg viewBox="0 0 44 26" fill="none" stroke="currentColor" ' +
+         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+         '<path class="ground" d="M2 21h40"/>' +
+         '<g class="form">' + form + '</g></svg>';
+}
+var STATION_FORM = {
+  /* a hill rising off the ground */
+  terrain: '<path d="M6 21 15 9l6 7 6-10 10 15"/>',
+  /* blades standing on it */
+  grass:   '<path d="M11 21c0-4 .8-7 2.6-9.5"/><path d="M18 21c0-6 1.2-10.5 3.4-13.5"/>' +
+           '<path d="M25 21c0-5 .9-8.5 2.4-10.8"/><path d="M32 21c0-6.5 1.2-10.5 3-13"/>',
+  /* something set down on it */
+  place:   '<path d="M15 21v-8l7-4 7 4v8"/><path d="M20 21v-5h4v5"/>',
+  /* something on it, picked out */
+  select:  '<path d="M18 21v-5l4-2.4 4 2.4v5"/>' +
+           '<path d="M9 11V6h5"/><path d="M30 6h5v5"/><path d="M9 16v5h5"/><path d="M35 16v5h-5"/>'
+};
+
+/* ==========================================================================
+   THUMBNAILS — models are rendered with the real object shader into a small
+   render target, so the picker shows exactly what will be placed.
+   ========================================================================== */
+var Thumbs = { rt: null, scene: null, cam: null, cache: {}, size: 128 };
+
+function initThumbs() {
+  Thumbs.rt = new THREE.WebGLRenderTarget(Thumbs.size, Thumbs.size, {
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat
+  });
+  Thumbs.scene = new THREE.Scene();
+  Thumbs.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 400);
+}
+
+/* Fixed studio lighting so a thumbnail stays readable whatever the time of
+   day is in the scene, and no fog so it is not washed out. */
+function thumbMaterial(def, part) {
+  var u = {
+    uTime: { value: 0 },
+    uWindDir: { value: new THREE.Vector2(1, 0) },
+    uWindStrength: { value: 0 }, uWindSpeed: { value: 0 }, uTurbulence: { value: 0 },
+    uWaveScale: { value: 0.1 }, uGustScale: { value: 0.1 }, uGustSpeed: { value: 0 }, uGustStrength: { value: 0 },
+    uSunDir: { value: new THREE.Vector3(0.45, 0.72, 0.53).normalize() },
+    uSunColor: { value: new THREE.Vector3(1.3, 1.26, 1.18) },
+    uSkyColor: { value: new THREE.Vector3(0.38, 0.44, 0.54) },
+    uGroundColor: { value: new THREE.Vector3(0.14, 0.14, 0.13) },
+    uAmbient: { value: 1 }, uExposure: { value: 1.05 },
+    uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0 },
+    uDrawDist: { value: 1e6 }, uFadeK: { value: 1 }, uAnimDist: { value: 0 },
+    uSimulate: { value: 0 }, uGhost: { value: 0 },
+    uModelH: { value: Math.max(def.height, 0.001) },
+    uMap: { value: part.tex || null },
+    uHasMap: { value: part.tex ? 1 : 0 },
+    uAlphaTest: { value: part.alphaTest || 0 },
+    uColor: { value: new THREE.Vector3(part.color[0], part.color[1], part.color[2]) }
+  };
+  return new THREE.ShaderMaterial({
+    vertexShader: IMP_VS, fragmentShader: IMP_FS, uniforms: u,
+    side: THREE.DoubleSide, transparent: true
+  });
+}
+
+/* Renders the model exactly as it will appear when placed — one draw per
+   merged material, same shader as the world. */
+function renderThumb(kind, canvas) {
+  var def = ASSETS[kind];
+  if (!def || !def.parts || !def.parts.length) return;
+  var meshes = [], mats = [];
+  for (var p = 0; p < def.parts.length; p++) {
+    var part = def.parts[p], base = part.geo;
+    var g = new THREE.InstancedBufferGeometry();
+    g.setAttribute('position', base.attributes.position);
+    g.setAttribute('normal', base.attributes.normal);
+    g.setAttribute('uv', base.attributes.uv);
+    if (base.index) g.setIndex(base.index);
+    var d = { iPosSeed: [0, 0, 0, 0.5], iQuat: [0, 0, 0, 1], iSclSway: [1, 1, 1, 0],
+              iTint: [1, 1, 1], iAnim: [0, 0, 0, 0] };
+    for (var n in d) g.setAttribute(n, new THREE.InstancedBufferAttribute(new Float32Array(d[n]), d[n].length));
+    g.instanceCount = 1;
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+    var mat = thumbMaterial(def, part);
+    var mesh = new THREE.Mesh(g, mat);
+    mesh.frustumCulled = false;
+    Thumbs.scene.add(mesh);
+    meshes.push(mesh); mats.push(mat);
+  }
+
+  var r = Math.max(def.size ? Math.max(def.size[0], def.size[1], def.size[2]) : def.height, 0.2) * 0.62 + 0.15;
+  var cy = def.height * 0.5;
+  var c = Thumbs.cam;
+  c.left = -r; c.right = r; c.top = r; c.bottom = -r;
+  c.position.set(r * 1.6, cy + r * 1.15, r * 2.0);
+  c.lookAt(0, cy, 0);
+  c.updateProjectionMatrix();
+  c.updateMatrixWorld();
+
+  var prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(Thumbs.rt);
+  renderer.setClearColor(0x241F17, 1);
+  renderer.clear();
+  renderer.render(Thumbs.scene, c);
+  var buf = new Uint8Array(Thumbs.size * Thumbs.size * 4);
+  renderer.readRenderTargetPixels(Thumbs.rt, 0, 0, Thumbs.size, Thumbs.size, buf);
+  renderer.setRenderTarget(prev);
+  renderer.setClearColor(0x000000, 1);
+  for (var m = 0; m < meshes.length; m++) {
+    Thumbs.scene.remove(meshes[m]);
+    meshes[m].geometry.dispose();
+    mats[m].dispose();
+  }
+
+  canvas.width = Thumbs.size; canvas.height = Thumbs.size;
+  var ctx = canvas.getContext('2d');
+  var img = ctx.createImageData(Thumbs.size, Thumbs.size);
+  // readRenderTargetPixels is bottom-up; flip into the canvas
+  for (var y = 0; y < Thumbs.size; y++) {
+    var src = (Thumbs.size - 1 - y) * Thumbs.size * 4;
+    img.data.set(buf.subarray(src, src + Thumbs.size * 4), y * Thumbs.size * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* A group of objects saved as one stamp has no single mesh to render. */
+function drawGroupSwatch(canvas) {
+  canvas.width = 128; canvas.height = 128;
+  var g = canvas.getContext('2d');
+  g.fillStyle = '#241F17'; g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = '#FFB43D'; g.lineWidth = 5; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(22, 96); g.lineTo(106, 96); g.stroke();
+  g.beginPath();
+  g.moveTo(34, 96); g.lineTo(34, 62); g.lineTo(52, 48); g.lineTo(70, 62); g.lineTo(70, 96);
+  g.stroke();
+  g.beginPath(); g.moveTo(88, 96); g.lineTo(88, 70); g.stroke();
+  g.beginPath(); g.arc(88, 60, 12, 0, Math.PI * 2); g.stroke();
+}
+
+/* Templates set a road type before laying track; the roads engine reads these. */
+function applyRoadTypeDefaults() {
+  var t = ROAD_TYPES[state.road.type];
+  if (!t) return;
+  state.road.width = t.width;
+  state.road.material = t.material;
+  state.road.markings = t.markings;
+  state.road.sidewalkL = t.sw;
+  state.road.sidewalkR = t.sw;
+}
+
+/* ==========================================================================
+   LAYER LIST — lives in the World sheet
+   ========================================================================== */
+function buildLayerList(host) {
+  var wrap = el('div');
+  host.appendChild(wrap);
+  function paint() {
+    wrap.innerHTML = '';
+    var counts = objectCounts();
+    CATS.forEach(function (c) {
+      var st = LayerState[c];
+      var row = el('div', 'layer' + (st.vis ? '' : ' off'));
+      var sw = el('div', 'sw'); sw.style.background = CAT_COLOR[c];
+      row.appendChild(sw);
+      row.appendChild(el('div', 'nm', c.charAt(0).toUpperCase() + c.slice(1)));
+      var n = c === 'grass' ? Grass.count : (c === 'roads' ? World.roads.length : (counts[c] === undefined ? '' : counts[c]));
+      row.appendChild(el('div', 'ct', n === '' ? '' : fmtInt(n)));
+
+      var vb = el('button', 'ic');
+      vb.innerHTML = svgIcon(st.vis ? ICON.eye : ICON.eyeoff);
+      vb.setAttribute('data-tip', st.vis ? 'Hide this layer' : 'Show this layer');
+      vb.onclick = function () { st.vis = !st.vis; applyLayerVisibility(); paint(); markSceneDirty(); };
+      row.appendChild(vb);
+
+      var lb = el('button', 'ic');
+      lb.innerHTML = svgIcon(st.lock ? ICON.lock : ICON.unlock);
+      lb.setAttribute('aria-pressed', st.lock ? 'true' : 'false');
+      lb.setAttribute('data-tip', st.lock ? 'Unlock — brushes and clicks can touch it again' : 'Lock — brushes and clicks pass straight through');
+      lb.onclick = function () { st.lock = !st.lock; paint(); markSceneDirty(); };
+      row.appendChild(lb);
+
+      wrap.appendChild(row);
+    });
+  }
+  paint();
+  uiPush({ refresh: paint });
+  return paint;
+}
+
+/* ==========================================================================
+   THE TOUR
+   --------------------------------------------------------------------------
+   A spotlight and a card. The scrim is the spotlight's own box-shadow and
+   nothing in the overlay takes pointer events except the card, so every step
+   can be tried for real while it is still on screen. Steps that can be tried
+   watch for it and move on by themselves.
+   ========================================================================== */
+var Tour = { i: -1, timer: 0, mark: 0, flew: false, on: false };
+
+var TOUR = [
+  {
+    title: 'Let’s build a world',
+    body: 'Four stations run down the left edge. You shape the <b>ground</b>, plant <b>grass</b> on it, ' +
+          '<b>place</b> things on top, and <b>select</b> anything you want to move. That is the whole tool.',
+    target: null
+  },
+  {
+    title: 'Fly around first',
+    body: 'Hold the <b>right mouse button</b> and move the mouse to look around. ' +
+          '<b>W A S D</b> flies, <b>E</b> goes up, <b>Q</b> goes down. Roll the wheel while looking to fly faster or slower.',
+    target: function () { return document.getElementById('stage'); },
+    hint: 'Try it — hold right-click and look around',
+    done: function () {
+      if (Ptr.mode === 'look' || Keys.move.f || Keys.move.b || Keys.move.l || Keys.move.r) Tour.flew = true;
+      return Tour.flew;
+    }
+  },
+  {
+    title: 'Shape the ground',
+    body: 'Pick <b>Raise</b> and drag on the ground to push a hill up. Hold <b>Alt</b> while you drag to dig down instead. ' +
+          '<b>Smooth</b> and <b>Flatten</b> settle it back again.',
+    mode: 'terrain',
+    target: function () { return document.querySelector('#rail .station'); },
+    hint: 'Try it — drag on the ground',
+    done: function () { return History.undo.length > Tour.mark; }
+  },
+  {
+    title: 'The settings follow the station',
+    body: 'Each station puts only its own controls here — the handful you actually reach for. ' +
+          '<b>All settings</b> at the bottom opens everything else when you want it.',
+    target: function () { return document.getElementById('panel'); }
+  },
+  {
+    title: 'Paint the grass',
+    body: 'Drag to plant grass, hold <b>Alt</b> to rub it out. The row of names under <b>Look</b> swaps the whole ' +
+          'field between a lawn, a meadow, wheat and more.',
+    mode: 'grass',
+    target: function () { return document.querySelectorAll('#rail .station')[1]; },
+    hint: 'Try it — drag on the ground',
+    done: function () { return History.undo.length > Tour.mark; }
+  },
+  {
+    title: 'Put things in it',
+    body: 'Everything you can place — houses, trees, people, cars — comes from Sketchfab. Press <b>Add models</b>, ' +
+          'search, pick one, then click on the ground. Put something in the wrong spot? The <b>Select</b> station ' +
+          'moves and deletes it.',
+    mode: 'place',
+    target: function () { return document.querySelectorAll('#rail .station')[2]; }
+  },
+  {
+    title: 'The world itself',
+    body: 'Time of day, water, ground colour, quality and layers belong to the whole world, so they live here ' +
+          'rather than in any one station.',
+    target: function () { return document.getElementById('sun-btn'); }
+  },
+  {
+    title: 'That’s everything',
+    body: 'Your world saves itself into this browser as you go. <b>Save</b> writes a file you can keep or send to ' +
+          'someone. <b>New world</b> starts you off from a finished scene. Press <b>?</b> any time for the key list.',
+    target: function () { return document.getElementById('b-save'); }
+  }
+];
+
+function startTour(from) {
+  closeModal();
+  Tour.i = (from || 0) - 1;
+  Tour.on = true;
+  Tour.flew = false;
+  document.getElementById('tour').classList.add('on');
+  clearInterval(Tour.timer);
+  Tour.timer = setInterval(tourPoll, 350);
+  window.addEventListener('resize', paintTour);
+  tourGo(1);
+}
+function endTour() {
+  Tour.on = false;
+  clearInterval(Tour.timer);
+  window.removeEventListener('resize', paintTour);
+  document.getElementById('tour').classList.remove('on');
+  state.world.seenIntro = true;
+  markSceneDirty();
+}
+function tourGo(dir) {
+  var next = Tour.i + dir;
+  if (next < 0) next = 0;
+  if (next >= TOUR.length) { endTour(); toast('Have fun. Press ? for the key list.', 'ok', 3600); return; }
+  Tour.i = next;
+  var s = TOUR[Tour.i];
+  if (s.mode && state.world.mode !== s.mode) setMode(s.mode);
+  Tour.mark = History.undo.length;
+  drawTourCard();
+  paintTour();
+}
+/* The card is rebuilt only when the step changes; the poll just re-measures,
+   so hovering Next does not flicker under it. */
+function tourPoll() {
+  if (!Tour.on) return;
+  var s = TOUR[Tour.i];
+  if (s && s.done && s.done()) { tourGo(1); return; }
+  paintTour();
+}
+
+function drawTourCard() {
+  var s = TOUR[Tour.i];
+  var card = document.getElementById('tour-card');
+  card.innerHTML = '';
+  card.appendChild(el('div', 'step-no num', (Tour.i + 1) + ' of ' + TOUR.length));
+  card.appendChild(el('h3', 'wide', s.title));
+  if (s.hint) card.appendChild(el('div', 'live', s.hint));
+  var p = el('p');
+  p.innerHTML = s.body;
+  card.appendChild(p);
+
+  var foot = el('div', 'tour-foot');
+  var dots = el('div');
+  dots.id = 'tour-dots';
+  for (var i = 0; i < TOUR.length; i++) {
+    var d = el('i');
+    if (i === Tour.i) d.className = 'on';
+    dots.appendChild(d);
+  }
+  foot.appendChild(dots);
+  foot.appendChild(el('div', 'grow'));
+  if (Tour.i > 0) {
+    var back = el('button', 'btn ghost', 'Back');
+    back.onclick = function () { tourGo(-1); };
+    foot.appendChild(back);
+  }
+  var skip = el('button', 'btn ghost', 'Skip');
+  skip.setAttribute('data-tip', 'Close the tour. The ? button brings it back.');
+  skip.onclick = endTour;
+  foot.appendChild(skip);
+  var nx = el('button', 'btn pri', Tour.i === TOUR.length - 1 ? 'Start building' : 'Next');
+  nx.onclick = function () { tourGo(1); };
+  foot.appendChild(nx);
+  card.appendChild(foot);
+}
+
+function paintTour() {
+  if (!Tour.on) return;
+  var s = TOUR[Tour.i];
+  var hole = document.getElementById('tour-hole');
+  var card = document.getElementById('tour-card');
+  var vw = window.innerWidth, vh = window.innerHeight;
+
+  var t = s.target ? s.target() : null;
+  var r = t ? t.getBoundingClientRect() : null;
+  if (r && (r.width < 2 || r.height < 2)) r = null;
+
+  if (r) {
+    var pad = 6;
+    hole.classList.remove('hidden');
+    hole.classList.toggle('pulse', !!s.done);
+    hole.style.left = (r.left - pad) + 'px';
+    hole.style.top = (r.top - pad) + 'px';
+    hole.style.width = (r.width + pad * 2) + 'px';
+    hole.style.height = (r.height + pad * 2) + 'px';
+  } else {
+    hole.classList.add('hidden');
+    hole.classList.remove('pulse');
+    hole.style.left = (vw / 2) + 'px';
+    hole.style.top = (vh / 2) + 'px';
+    hole.style.width = '0px';
+    hole.style.height = '0px';
+  }
+
+  // beside the spotlight if it fits, otherwise under it, and dead centre
+  // when there is nothing to point at
+  var cw = card.offsetWidth || 330, ch = card.offsetHeight || 220, gap = 18;
+  var x, y;
+  if (!r) {
+    x = (vw - cw) / 2; y = (vh - ch) / 2;
+  } else if (r.right + gap + cw < vw - 12) {
+    x = r.right + gap; y = r.top;
+  } else if (r.left - gap - cw > 12) {
+    x = r.left - gap - cw; y = r.top;
+  } else if (r.bottom + gap + ch < vh - 12) {
+    x = r.left + r.width / 2 - cw / 2; y = r.bottom + gap;
+  } else {
+    x = r.left + r.width / 2 - cw / 2; y = r.top - gap - ch;
+  }
+  card.style.left = Math.round(clamp(x, 12, Math.max(12, vw - cw - 12))) + 'px';
+  card.style.top = Math.round(clamp(y, 12, Math.max(12, vh - ch - 12))) + 'px';
+}
+
+/* ==========================================================================
+   TOP BAR
+   ========================================================================== */
+/* The clock dot is the sky at that hour, so the button reads at a glance. */
+function todColor(h) {
+  var stops = [
+    [0,  [0.10, 0.13, 0.22]], [5,  [0.16, 0.18, 0.30]], [6.5, [0.86, 0.47, 0.28]],
+    [9,  [0.55, 0.74, 0.93]], [13, [0.47, 0.70, 0.95]], [17, [0.62, 0.72, 0.90]],
+    [18.6, [0.93, 0.48, 0.24]], [20, [0.28, 0.22, 0.34]], [24, [0.10, 0.13, 0.22]]
+  ];
+  h = ((h % 24) + 24) % 24;
+  for (var i = 0; i < stops.length - 1; i++) {
+    if (h >= stops[i][0] && h <= stops[i + 1][0]) {
+      var t = (h - stops[i][0]) / (stops[i + 1][0] - stops[i][0]);
+      var c = mixArr(stops[i][1], stops[i + 1][1], t);
+      return rgb2hex(c[0], c[1], c[2]);
+    }
+  }
+  return '#8FC8F0';
+}
+
+function buildTopExtras() {
+  document.getElementById('sun-btn').onclick = showWorldSheet;
+  document.getElementById('b-new').onclick = showTemplates;
+  document.getElementById('b-help').onclick = showHelp;
+  var saved = document.getElementById('saved');
+  saved.innerHTML = svgIcon(ICON.check, 2.6) + '<span>Saved</span>';
+  refreshTopExtras();
+}
+function refreshTopExtras() {
+  var b = document.getElementById('sun-btn');
+  if (!b) return;
+  b.querySelector('.dot').style.background = todColor(state.env.timeOfDay);
+  b.querySelector('b').textContent = clockLabel(state.env.timeOfDay);
+}
+function toggleSimulate() {
+  state.world.simulate = !state.world.simulate;
+  syncEnvUniforms();
+  refreshUI();
+  markSceneDirty();
+  toast(state.world.simulate ? 'Everything is moving again' : 'Everything is frozen');
+}
+function setQuality(q) {
+  state.world.quality = q;
+  Grass.mat.uniforms.uDensity.value = state.grass.density * Q().grass;
+  syncEnvUniforms();
+  rebuildWater();
+  refreshUI();
+  markSceneDirty();
+}
+var _savedTimer = 0;
+function flashSaved() {
+  var s = document.getElementById('saved');
+  if (!s) return;
+  s.classList.add('on');
+  clearTimeout(_savedTimer);
+  _savedTimer = setTimeout(function () { s.classList.remove('on'); }, 1800);
+}
