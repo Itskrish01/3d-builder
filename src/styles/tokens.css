@@ -41,8 +41,13 @@
   --s6: 34px;
 
   /* type */
-  --f: "Archivo", -apple-system, blinkmacsystemfont, "Segoe UI", roboto, helvetica, arial, sans-serif;
-  --fm: "IBM Plex Mono", ui-monospace, sfmono-regular, menlo, consolas, monospace;
+  /* The interface font is the one the reader already has. A downloaded
+     variable face cost a flash of unstyled text and a width axis nobody
+     asked for; the system UI face is what every other application on the
+     machine uses, so it simply looks normal. */
+  --f: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto,
+       Helvetica, Arial, sans-serif;
+  --fm: ui-monospace, "Cascadia Mono", "Segoe UI Mono", "SF Mono", Menlo, Consolas, monospace;
   --fs0: 11px;   /* micro: units, counts */
   --fs1: 12px;   /* control labels */
   --fs2: 13px;   /* body, buttons */

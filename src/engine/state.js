@@ -86,6 +86,17 @@ function baseState() {
       roughness: 0.85,
       grid: true, gridSpacing: 2, gridOpacity: 0.22
     },
+    /* The render is its own scene. Keeping its light separate is the point:
+       you can shoot the village at midnight while building it at noon. */
+    render: {
+      quality: 'good',
+      matchWorld: true,
+      timeOfDay: 18.6,
+      exposure: 1.05,
+      sunStrength: 1,
+      skyStrength: 1,
+      showSky: true
+    },
     env: {
       timeOfDay: 15.4,
       exposure: 1.05,

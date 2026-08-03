@@ -12,7 +12,6 @@ body {
   font-family: var(--f);
   font-size: var(--fs2);
   line-height: 1.45;
-  font-variation-settings: "wdth" 100;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizelegibility;
   user-select: none;
@@ -35,7 +34,7 @@ button { background: none; border: 0; cursor: pointer; }
 
 /* The wide grotesque names things: stations, group titles, headings. Nothing
    else — at small sizes it stops being a voice and starts being noise. */
-.wide { font-variation-settings: "wdth" 118; letter-spacing: -0.005em; }
+.wide { letter-spacing: -0.006em; font-weight: 700; }
 .num { font-family: var(--fm); font-variant-numeric: tabular-nums; }
 
 kbd {

@@ -41,7 +41,7 @@ export function TopBar({ onOpenWorld, onOpenTemplates, onOpenHelp, onOpenFile, o
     <header className="topbar">
       <div className="brand">
         <Icon path={ICON.wordmark} w={2} />
-        <b>Grass Painter</b>
+        <b>Diorama</b>
       </div>
       <div className="sep" />
       <Btn icon={ICON.undo} kind="ghost" tip="Undo the last thing you did" kbd="Ctrl Z" disabled={!undo} onClick={engine.undo} />

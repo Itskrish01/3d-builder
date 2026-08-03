@@ -15,11 +15,6 @@ export const STATIONS = {
     lede: <>Drag on the ground to push it up. Hold <b>Alt</b> to dig down.</>,
     tip: 'Shape the ground — hills, valleys, cliffs and flat building plots.'
   },
-  grass: {
-    label: 'Grass',
-    lede: <>Drag to plant grass. Hold <b>Alt</b> to rub it out.</>,
-    tip: 'Plant grass and set how it looks and how it moves in the wind.'
-  },
   place: {
     label: 'Place',
     lede: <>Pick a model, then click on the ground to put one down.</>,
@@ -41,9 +36,6 @@ export const TOOLS = {
   noise: { label: 'Roughen', icon: ICON.noise, tip: 'Add rocky bumpiness.' },
   erode: { label: 'Erode', icon: ICON.erode, tip: 'Let material slide downhill and settle, the way weather does it.' },
 
-  paint: { label: 'Paint', icon: ICON.brush, tip: 'Plant grass. Alt rubs it out.' },
-  erase: { label: 'Erase', icon: ICON.eraser, tip: 'Rub grass out.' },
-  eyedropper: { label: 'Copy look', icon: ICON.dropper, tip: 'Take the settings from the grass under the cursor.' },
 
   place_one: { label: 'One', icon: ICON.place, tip: 'Click to put down a single model. Press R to turn it.' },
   place_many: { label: 'Scatter', icon: ICON.scatter, tip: 'Drag to sprinkle lots of them. Alt removes instead.' },
@@ -55,7 +47,6 @@ export const TOOLS = {
 /* `smooth` is shared between two stations and means something different in
    each, so the grass one is relabelled where it is used rather than renamed. */
 export const TOOL_OVERRIDES = {
-  grass: { smooth: { label: 'Even out', tip: 'Make thick and thin patches match.' } }
 };
 
 export function toolCopy(station, id) {
@@ -99,7 +90,6 @@ export const SHORTCUTS = [
   ['Your world', [
     ['Ctrl Z', 'Undo'], ['Ctrl Shift Z', 'Redo'], ['Ctrl S', 'Save a file'],
     ['Ctrl O', 'Open a file'], ['Ctrl P', 'Save a picture'], ['P', 'Freeze or unfreeze everything'],
-    ['Shift F', 'Fill the world with grass'], ['Ctrl Shift Del', 'Clear the grass'],
     ['G', 'Measuring grid'], ['Shift 1-6', 'Grass looks'], ['?', 'This list']
   ]]
 ];

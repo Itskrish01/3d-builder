@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { emit, ui } from './host.js';
 import { ASSETS, makeImpMaterial } from './assets.js';
 import { syncGroundUniforms } from './field.js';
-import { Brush, beginStroke, doRedo, doUndo, endStroke, eyedrop, fillPlate, paintStamp, smoothStamp } from './history.js';
+import { Brush, beginStroke, doRedo, doUndo, endStroke, eyedrop, paintStamp, smoothStamp } from './history.js';
 import { MODES, allTools, currentTool, focusSelection, setMode, setTool, toggleSimulate } from './modes.js';
 import { exportPNG, markSceneDirty, saveScene } from './persistence.js';
 import { applyPreset } from './presets.js';
@@ -224,7 +224,7 @@ export function bindInput() {
     /* A traced image is only valid for the view it was traced from, so the
        first touch of the world puts you back in the fast view rather than
        leaving a photograph of somewhere you are no longer looking. */
-    if (PT.active) { stopRender(); return; }
+    if (PT.active && !PT.live) { stopRender(); return; }
     // A lost pointerup (window blur, capture stolen, alert) used to strand
     // Ptr.mode and jam the camera in look mode. Starting a fresh gesture with
     // no buttons held resets the bookkeeping.
@@ -595,7 +595,7 @@ export function onKeyDown(e) {
   emit('mode');
   if (typingInField(e)) return;
   // Same as a click: anything that would move the camera ends the render.
-  if (PT.active && (e.key === 'Escape' || MOVE_CODES[e.code])) { stopRender(); return; }
+  if (PT.active && (e.key === 'Escape' || (MOVE_CODES[e.code] && !PT.live))) { stopRender(); return; }
   if (setMoveKey(e, true)) { e.preventDefault(); return; }
 
   var mod = e.ctrlKey || e.metaKey;
@@ -613,7 +613,6 @@ export function onKeyDown(e) {
       setMode('select'); selectObjects(all, false); emit('selection');
       return;
     }
-    if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); ui.askClearGrass(); return; }
     return;
   }
 
@@ -641,7 +640,6 @@ export function onKeyDown(e) {
     case 'r': Ghost.rot += Math.PI / 12; updateGhost(); return;
     case 'R': Ghost.rot -= Math.PI / 12; updateGhost(); return;
     case 'f': focusSelection(); return;
-    case 'F': fillPlate(); return;
     case 'p': case 'P': toggleSimulate(); return;
     case 'g': case 'G':
       state.plate.grid = !state.plate.grid; syncGroundUniforms(); emit('state'); markSceneDirty(); return;

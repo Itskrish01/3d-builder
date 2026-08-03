@@ -14,7 +14,7 @@ export class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('Grass Painter UI crashed:', error, info.componentStack);
+    console.error('Diorama UI crashed:', error, info.componentStack);
   }
 
   render() {

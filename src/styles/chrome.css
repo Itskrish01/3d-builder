@@ -40,7 +40,6 @@
 .brand b {
   font-size: var(--fs3);
   font-weight: 700;
-  font-variation-settings: "wdth" 118;
   white-space: nowrap;
 }
 .sep { width: 1px; height: 24px; background: var(--rule); flex: 0 0 auto; margin: 0 var(--s1); }
@@ -125,7 +124,6 @@
 .station span {
   font-size: 10px;
   font-weight: 700;
-  font-variation-settings: "wdth" 118;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   line-height: 1;
@@ -175,7 +173,7 @@
 }
 .panel.closed { transform: translateX(100%); }
 .panel-head { flex: 0 0 auto; padding: var(--s4) var(--s4) var(--s3); border-bottom: 1px solid var(--rule); }
-.panel-title { font-size: var(--fs4); font-weight: 700; font-variation-settings: "wdth" 118; line-height: 1.15; display: block; }
+.panel-title { font-size: var(--fs4); font-weight: 700; line-height: 1.15; display: block; }
 .panel-lede { display: block; margin-top: 5px; font-size: var(--fs1); color: var(--straw); line-height: 1.5; max-width: 30ch; }
 .panel-lede b { color: var(--chalk); font-weight: 600; }
 .panel-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--s4) var(--s4) var(--s6); }
@@ -373,12 +371,11 @@
   font-size: var(--fs0);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  font-variation-settings: "wdth" 118;
   font-weight: 600;
 }
 .fatal .in { max-width: 440px; }
 .fatal svg { width: 42px; height: 42px; color: var(--clay); margin-bottom: var(--s4); }
-.fatal h2 { font-size: 22px; font-weight: 700; font-variation-settings: "wdth" 118; margin-bottom: var(--s3); }
+.fatal h2 { font-size: 22px; font-weight: 700; margin-bottom: var(--s3); }
 .fatal p { color: var(--straw); line-height: 1.65; font-size: var(--fs2); }
 
 /* ============================================================================
@@ -418,67 +415,64 @@
 .render-btn {
   display: flex; align-items: center; gap: 7px;
   height: 32px; padding: 0 12px;
-  border: 1px solid var(--line); border-radius: 9px;
-  background: var(--soil-2); color: var(--straw-1);
-  font: 600 12.5px/1 var(--ui); letter-spacing: .01em;
+  border: 1px solid var(--rule); border-radius: 9px;
+  background: var(--husk); color: var(--straw);
+  font: 600 12.5px/1 var(--f); letter-spacing: .01em;
   cursor: pointer; transition: background .16s, border-color .16s, color .16s;
 }
 .render-btn svg { width: 15px; height: 15px; }
-.render-btn:hover { background: var(--soil-3); color: var(--straw-0); border-color: var(--line-2); }
-.render-btn.on { border-color: var(--gold); color: var(--gold); }
-.render-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.render-btn:hover { background: var(--husk-2); color: var(--chalk); border-color: var(--rule-2); }
+.render-btn.on { border-color: var(--sun); color: var(--sun); }
+.render-btn:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
 
 .render-panel {
-  position: absolute; right: 14px; bottom: 14px; z-index: 40;
-  width: min(340px, calc(100vw - 28px));
-  display: flex; flex-direction: column; gap: 12px;
-  padding: 14px;
-  background: color-mix(in srgb, var(--soil-1) 94%, transparent);
-  backdrop-filter: blur(14px);
-  border: 1px solid var(--line-2); border-radius: 14px;
-  box-shadow: 0 18px 46px rgb(0 0 0 / .5);
+  position: absolute; right: var(--s4); bottom: var(--s4); z-index: 40;
+  width: min(340px, calc(100vw - var(--s4) * 2));
+  max-height: calc(100% - var(--s4) * 2);
+  display: flex; flex-direction: column; gap: var(--s3);
+  padding: var(--s4); overflow-y: auto;
+  background: var(--soil);
+  border: 1px solid var(--rule-2); border-radius: var(--r3);
+  box-shadow: 0 20px 52px rgb(0 0 0 / .55), 0 0 0 1px rgb(0 0 0 / .35);
 }
-.render-head { display: flex; align-items: center; justify-content: space-between; }
+.render-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s3); min-height: 26px;
+}
 
-.render-note { margin: 0; font: 400 12px/1.55 var(--ui); color: var(--straw-2); }
-.render-note.dim { color: var(--straw-3, var(--straw-2)); font-size: 11.5px; opacity: .85; }
+.render-note { margin: 0; font: 400 12px/1.55 var(--f); color: var(--straw-2); }
+.render-note.dim { color: var(--straw-2); font-size: 11.5px; opacity: .85; }
 .render-note.err { color: var(--clay); }
 
-.render-quality { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.render-quality .chip {
-  display: flex; flex-direction: column; gap: 3px; min-width: 0;
-  padding: 9px 8px; text-align: left;
-  border: 1px solid var(--line); border-radius: 9px;
-  background: var(--soil-2); color: var(--straw-1); cursor: pointer;
-  transition: background .16s, border-color .16s;
+/* Nothing in the panel may shrink: it is a flex column with a max-height, so
+   the default flex-shrink sliced the second line off every chip. The panel
+   scrolls; its children keep their size. */
+.render-panel > * { flex: 0 0 auto; }
+.render-quality {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--s2); align-items: stretch;
 }
-.render-quality .chip b { font: 600 12px/1 var(--ui); }
-.render-quality .chip span { font: 400 10.5px/1.3 var(--ui); color: var(--straw-2); }
-.render-quality .chip:hover { background: var(--soil-3); }
-.render-quality .chip.on { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 12%, var(--soil-2)); }
-.render-quality .chip.on b { color: var(--gold); }
-.render-quality .chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
-.render-progress { display: flex; flex-direction: column; gap: 7px; }
+.render-progress { display: flex; flex-direction: column; gap: var(--s2); }
 .render-progress .bar {
   height: 5px; border-radius: 3px; overflow: hidden;
-  background: var(--soil-3);
+  background: var(--husk-2);
 }
 .render-progress .bar i {
-  display: block; height: 100%; background: var(--gold);
+  display: block; height: 100%; background: var(--sun);
   transition: width .3s linear;
 }
 .render-stats {
   display: flex; justify-content: space-between; gap: 10px;
   font-size: 11px; color: var(--straw-2);
 }
-.render-actions { display: flex; gap: 8px; }
+.render-actions { display: flex; gap: var(--s2); }
 .render-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
 
 .spinner {
   display: inline-block; width: 11px; height: 11px; margin-right: 6px;
   vertical-align: -1px;
-  border: 2px solid var(--line-2); border-top-color: var(--gold);
+  border: 2px solid var(--rule-2); border-top-color: var(--sun);
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }
@@ -488,3 +482,44 @@
   .spinner { animation: none; }
   .render-progress .bar i { transition: none; }
 }
+
+/* The render panel's own tab strip and settings column. */
+/* The tab strip is a full-bleed rule, so it has to escape the panel
+   padding by exactly that padding — not by a number that happens to
+   match it today. */
+.render-panel .panel-tabs {
+  margin: 0 calc(var(--s4) * -1) var(--s1);
+  padding: 0 var(--s4);
+}
+.render-light {
+  display: flex; flex-direction: column; gap: var(--s1);
+  max-height: 44vh; overflow-y: auto;
+  margin: 0 calc(var(--s2) * -1); padding: 0 var(--s2);
+}
+.render-light .ctrl { padding-left: 0; padding-right: 0; }
+.render-panel .render-quality + .ctrl { margin-top: 4px; }
+
+/* These are two-line cards, not pills. They used to borrow `.chip`, which is a
+   fixed-height control — so the second line was sliced off no matter what
+   padding or wrapping was set on top of it. A different shape needs a
+   different component. */
+.render-quality .qopt {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0; height: auto; min-height: 0;
+  padding: var(--s2); text-align: left;
+  border: 1px solid var(--rule); border-radius: var(--r2);
+  background: var(--husk); color: var(--straw);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.render-quality .qopt b {
+  font-size: var(--fs1); font-weight: 600; line-height: 1.2; color: var(--chalk);
+}
+.render-quality .qopt span {
+  font-size: 10.5px; line-height: 1.35; color: var(--straw-2);
+  overflow-wrap: anywhere;
+}
+.render-quality .qopt:hover { background: var(--husk-2); }
+.render-quality .qopt.on { border-color: var(--sun); background: var(--sun-wash); }
+.render-quality .qopt.on b { color: var(--sun); }
+.render-quality .qopt:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }

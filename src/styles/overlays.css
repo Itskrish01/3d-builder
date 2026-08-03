@@ -69,7 +69,7 @@
 @keyframes modal-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
 .modal.wide { width: min(880px, 100%); }
 .modal-head { display: flex; align-items: center; gap: var(--s3); padding: var(--s5) var(--s5) var(--s3); }
-.modal-head b { font-size: var(--fs4); font-weight: 700; font-variation-settings: "wdth" 118; flex: 1 1 auto; }
+.modal-head b { font-size: var(--fs4); font-weight: 700; flex: 1 1 auto; }
 .modal-body { padding: 0 var(--s5) var(--s5); }
 .modal-body > p { color: var(--straw); line-height: 1.65; margin-bottom: var(--s4); max-width: 64ch; }
 .modal .btn-row { margin-top: var(--s5); justify-content: flex-end; }
@@ -111,7 +111,6 @@
   text-transform: uppercase;
   letter-spacing: 0.1em;
   font-weight: 600;
-  font-variation-settings: "wdth" 118;
 }
 .readout b { font-family: var(--fm); font-size: var(--fs3); font-weight: 500; color: var(--chalk); }
 .readout div.warn b { color: var(--clay); }
@@ -120,7 +119,7 @@
 .cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s3); }
 .card { border-radius: var(--r3); background: var(--husk); padding: var(--s4); text-align: left; transition: background var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .card:hover { background: var(--husk-2); transform: translateY(-2px); }
-.card b { display: block; font-size: var(--fs3); font-weight: 700; font-variation-settings: "wdth" 118; color: var(--chalk); margin-bottom: 4px; }
+.card b { display: block; font-size: var(--fs3); font-weight: 700; color: var(--chalk); margin-bottom: 4px; }
 .card span { display: block; font-size: var(--fs1); line-height: 1.5; color: var(--straw-2); }
 @media (width <= 620px) { .cards { grid-template-columns: 1fr; } }
 
@@ -132,7 +131,6 @@
   text-transform: uppercase;
   color: var(--straw-2);
   font-weight: 600;
-  font-variation-settings: "wdth" 118;
   margin: 0 0 var(--s3);
 }
 .keys dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px var(--s3); align-items: center; }
@@ -181,7 +179,7 @@
   transition: top var(--slow) var(--ease), left var(--slow) var(--ease);
 }
 .tour-card .step-no { font-family: var(--fm); font-size: var(--fs0); color: var(--sun); letter-spacing: 0.06em; }
-.tour-card h3 { font-size: var(--fs4); font-weight: 700; font-variation-settings: "wdth" 118; margin: 6px 0 8px; line-height: 1.2; }
+.tour-card h3 { font-size: var(--fs4); font-weight: 700; margin: 6px 0 8px; line-height: 1.2; }
 .tour-card p { font-size: var(--fs2); color: var(--straw); line-height: 1.6; margin-bottom: var(--s3); }
 .tour-card p b { color: var(--chalk); font-weight: 600; }
 .tour-foot { display: flex; align-items: center; gap: var(--s2); }
@@ -195,7 +193,15 @@
 /* ============================================================================
    MODEL PICKER AND THE SKETCHFAB BROWSER
    ========================================================================== */
-.mgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+/* Reflow rather than squeeze: the panel is a column on a desktop and a
+   drawer on a phone, and three fixed columns had to crush the cards to fit
+   the narrow case. Cards keep a floor and the grid picks the count. */
+.mgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
 .mcard {
   border-radius: var(--r2);
   background: var(--husk);
@@ -235,13 +241,17 @@
   justify-content: center;
 }
 .mcard .tick svg { width: 11px; height: 11px; }
+.mcard b { margin-top: 5px; }
 .mcard.add { background: transparent; box-shadow: inset 0 0 0 1px var(--rule-2); }
 .mcard.add:hover { background: var(--husk); }
 .mcard.add .ph { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1; border-radius: 6px; color: var(--sun); }
 .mcard.add .ph svg { width: 22px; height: 22px; }
 /* The panel is 320px, so the sentence and the button stack rather than fight
    over the width. */
-.chosen-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--s2); }
+.chosen-row {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: var(--s2); margin-top: var(--s2);
+}
 .chosen-row .note { margin-bottom: 0; }
 .chosen-row .note b { color: var(--sun); }
 
@@ -297,7 +307,10 @@
 .sfmsg.err { color: var(--clay); }
 
 /* ---------- library rows ---------- */
-.lib { display: flex; align-items: center; gap: var(--s3); padding: 9px 0; border-top: 1px solid var(--rule); }
+.lib {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: var(--s2) 0; border-top: 1px solid var(--rule);
+}
 .lib:first-child { border-top: 0; }
 .lib canvas { width: 40px; height: 40px; border-radius: var(--r1); background: var(--well); flex: 0 0 auto; }
 .lib .info { flex: 1 1 auto; min-width: 0; }

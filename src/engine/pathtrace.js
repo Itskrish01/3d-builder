@@ -3,7 +3,9 @@ import { WebGLPathTracer, GradientEquirectTexture } from 'three-gpu-pathtracer';
 import { ASSETS } from './assets.js';
 import { emit, ui } from './host.js';
 import { renderFrame } from './loop.js';
-import { Env, camera, renderer, updateEnv } from './renderer.js';
+import { ROAD_MAT_LIST, Roads } from './roads.js';
+import { Env, SUN_KEYS, camera, renderer, updateEnv } from './renderer.js';
+import { clamp, mixArr } from './util.js';
 import { state } from './state.js';
 import { Terrain } from './terrain.js';
 import { Water } from './water.js';
@@ -37,11 +39,13 @@ export var PT = {
   active: false,        // a render is running or finished on screen
   building: false,      // baking the scene / building the BVH
   compiling: false,     // the tracer's own shader, which is not quick
+  live: false,          // keeps tracing while you fly, instead of one still
   samples: 0,
   target: 0,            // samples to stop at; 0 means keep going
   tris: 0,
   meshes: 0,
   skipped: 0,           // things that could not be traced, for honesty
+  progress: 0,          // BVH build, 0..100
   error: '',
   startedAt: 0
 };
@@ -51,6 +55,7 @@ var ptScene = null;
 var ptCamera = null;
 var built = [];         // everything to dispose when we stop
 var savedOutput = null;
+
 
 /* Every shader in this engine tone maps and gamma-encodes itself, so the
    renderer is left in linear with no tone mapping. The tracer's final blit
@@ -68,7 +73,8 @@ function takeOutputStage() {
   };
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = state.env.exposure;
+  var r = state.render || {};
+  renderer.toneMappingExposure = r.exposure === undefined ? state.env.exposure : r.exposure;
 }
 function releaseOutputStage() {
   if (!savedOutput) return;
@@ -265,6 +271,40 @@ function bakeObjects(scene) {
   }
 }
 
+/* Roads are already real geometry on the CPU — the one system in here that
+   needed no reconstruction at all. */
+function bakeRoads(scene) {
+  for (var i = 0; i < ROAD_MAT_LIST.length; i++) {
+    var name = ROAD_MAT_LIST[i];
+    var src = Roads.meshes[name];
+    if (!src || !src.geometry || !src.geometry.attributes.position) continue;
+    if (!src.geometry.attributes.position.count) continue;
+
+    var geo = src.geometry.clone();
+    var su = src.material.uniforms.uSurface.value;
+    var water = src.material.uniforms.uWater.value > 0;
+    var mat = water
+      ? new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color(su.x, su.y, su.z),
+        roughness: 0.08, metalness: 0, transmission: 0.85, thickness: 0.6, ior: 1.333
+      })
+      : new THREE.MeshStandardMaterial({
+        color: new THREE.Color(su.x, su.y, su.z),
+        roughness: 0.9, metalness: 0, side: THREE.DoubleSide
+      });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.matrixAutoUpdate = false;
+    mesh.matrix.copy(src.matrixWorld);
+    mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+    mesh.updateMatrixWorld(true);
+    scene.add(mesh);
+    built.push(geo, mat);
+    PT.meshes++;
+    if (geo.index) PT.tris += geo.index.count / 3;
+    else PT.tris += geo.attributes.position.count / 3;
+  }
+}
+
 function bakeWater(scene) {
   if (!state.water || !state.water.on || !Water.geo || !Water.geo.attributes.position) return;
   var g = Water.geo.clone();
@@ -284,21 +324,58 @@ function bakeWater(scene) {
 /* The sky is the light. Handing the tracer the same gradient the sky shader
    draws means the render is lit by the time of day you set, not by a studio
    preset that would look nothing like the view you took it from. */
+/* The same keyframe table the world uses, evaluated for an arbitrary hour
+   without touching the live environment — so a render can be at midnight while
+   you keep building at noon. */
+export function envAt(hour) {
+  var a = (hour - 6) / 12 * Math.PI;
+  var el = Math.sin(a) * (Math.PI * 0.5) * 0.94;
+  var az = Math.PI * 0.28 + (hour / 24) * Math.PI * 1.35;
+  var dir = new THREE.Vector3(
+    Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)
+  ).normalize();
+
+  var y = dir.y, i = 0;
+  while (i < SUN_KEYS.length - 2 && y > SUN_KEYS[i + 1].y) i++;
+  var k0 = SUN_KEYS[i], k1 = SUN_KEYS[i + 1];
+  var t = clamp((y - k0.y) / (k1.y - k0.y), 0, 1);
+  t = t * t * (3 - 2 * t);
+  return {
+    sunDir: dir,
+    sun: mixArr(k0.sun, k1.sun, t),
+    zenith: mixArr(k0.zen, k1.zen, t),
+    horizon: mixArr(k0.hor, k1.hor, t),
+    amb: mixArr(k0.amb, k1.amb, t)
+  };
+}
+
 function bakeEnvironment(scene) {
   updateEnv();
+  var r = state.render || {};
+  /* Either the render is a photograph of the world as it stands, or it is its
+     own scene with its own hour — a night shot of a village you are building
+     at noon, without disturbing the light you are building under. */
+  var e = r.matchWorld === false
+    ? envAt(r.timeOfDay === undefined ? 18.5 : r.timeOfDay)
+    : { sunDir: Env.sunDir, sun: [Env.sun.x, Env.sun.y, Env.sun.z],
+        zenith: [Env.zenith.x, Env.zenith.y, Env.zenith.z],
+        horizon: [Env.horizon.x, Env.horizon.y, Env.horizon.z] };
+
+  var sky = r.skyStrength === undefined ? 1 : r.skyStrength;
   var grad = new GradientEquirectTexture(1024);
-  grad.topColor.setRGB(Env.zenith.x, Env.zenith.y, Env.zenith.z);
-  grad.bottomColor.setRGB(Env.horizon.x, Env.horizon.y, Env.horizon.z);
+  grad.topColor.setRGB(e.zenith[0] * sky, e.zenith[1] * sky, e.zenith[2] * sky);
+  grad.bottomColor.setRGB(e.horizon[0] * sky, e.horizon[1] * sky, e.horizon[2] * sky);
   grad.exponent = 1.6;
   grad.update();
   scene.environment = grad;
-  scene.background = state.env.sky ? grad : null;
+  scene.background = r.showSky === false ? null : grad;
   built.push(grad);
 
+  var strength = r.sunStrength === undefined ? 1 : r.sunStrength;
   var sun = new THREE.DirectionalLight();
-  sun.color.setRGB(Env.sun.x, Env.sun.y, Env.sun.z);
-  sun.intensity = 1;
-  sun.position.copy(Env.sunDir).multiplyScalar(500);
+  sun.color.setRGB(e.sun[0], e.sun[1], e.sun[2]);
+  sun.intensity = strength;
+  sun.position.copy(e.sunDir).multiplyScalar(500);
   sun.target.position.set(0, 0, 0);
   scene.add(sun);
   scene.add(sun.target);
@@ -322,6 +399,7 @@ export function startRender(opt) {
   PT.error = '';
   PT.samples = 0; PT.tris = 0; PT.meshes = 0; PT.skipped = 0;
   PT.target = opt.target || 0;
+  PT.live = !!opt.live;
   PT.startedAt = Date.now();
   emit('pathtrace');
 
@@ -333,6 +411,7 @@ export function startRender(opt) {
       built = [];
       bakeEnvironment(ptScene);
       bakeTerrain(ptScene);
+      bakeRoads(ptScene);
       bakeObjects(ptScene);
       bakeWater(ptScene);
 
@@ -359,6 +438,8 @@ export function startRender(opt) {
       tracer.bounces = opt.bounces === undefined ? 5 : opt.bounces;
       tracer.filterGlossyFactor = 0.5;
       tracer.multipleImportanceSampling = true;
+      // While flying, show a coarse trace immediately rather than nothing.
+      tracer.dynamicLowRes = PT.live;
       tracer.renderToCanvas = true;
       /* Until enough samples land, the tracer shows a fallback — by default it
          rasterises its own baked scene, which means three compiling a standard
@@ -366,10 +447,18 @@ export function startRender(opt) {
          compile. Show our own view instead: the warm-up looks like the thing
          you were just looking at, and three never sees those materials. */
       tracer.rasterizeSceneCallback = function () { renderFrame(); };
-      tracer.setScene(ptScene, ptCamera);
 
+      /* Built on the main thread, deliberately. The library's async path needs
+         its BVH worker, and that worker does not run against the three version
+         this project is pinned to — it fails, and a generator that has already
+         started asynchronously cannot then be built synchronously, so trying
+         and falling back leaves no way to recover. A big scene therefore stalls
+         the tab for a few seconds here. That is the honest cost; the panel says
+         so before you press the button. */
+      tracer.setScene(ptScene, ptCamera);
       PT.building = false;
       PT.active = true;
+      PT.progress = 100;
       emit('pathtrace');
     } catch (e) {
       // The message alone is never enough to act on a bake failure.
@@ -390,6 +479,23 @@ export function startRender(opt) {
 export function renderStep() {
   if (!tracer || !PT.active) return false;
   try {
+    /* Live mode follows the camera instead of freezing it. Any movement makes
+       the accumulated image wrong, so it is thrown away and started again —
+       which is why this is the cheap setting and not the patient one. */
+    if (PT.live && ptCamera) {
+      if (!ptCamera.position.equals(camera.position) ||
+          !ptCamera.quaternion.equals(camera.quaternion) ||
+          ptCamera.fov !== camera.fov || ptCamera.aspect !== camera.aspect) {
+        ptCamera.position.copy(camera.position);
+        ptCamera.quaternion.copy(camera.quaternion);
+        ptCamera.fov = camera.fov;
+        ptCamera.aspect = camera.aspect;
+        ptCamera.updateProjectionMatrix();
+        ptCamera.updateMatrixWorld(true);
+        tracer.updateCamera();
+        PT.samples = 0;
+      }
+    }
     /* Reaching the target stops the *accumulating*, not the drawing. Returning
        early instead left the finished picture undrawn and the canvas black —
        the one moment the whole feature exists for. */
@@ -432,6 +538,7 @@ export function stopRender() {
   var was = PT.active || PT.building;
   PT.active = false;
   PT.building = false;
+  PT.live = false;
   PT.samples = 0;
   if (was) emit('pathtrace');
 }

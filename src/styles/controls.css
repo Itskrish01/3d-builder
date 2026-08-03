@@ -10,7 +10,6 @@
   gap: var(--s2);
   font-size: var(--fs0);
   font-weight: 600;
-  font-variation-settings: "wdth" 118;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--straw-2);
@@ -239,7 +238,6 @@
   letter-spacing: 0.05em;
   font-weight: 600;
   text-transform: uppercase;
-  font-variation-settings: "wdth" 112;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

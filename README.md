@@ -234,9 +234,37 @@ rock and tops stay snow. The sky becomes an equirectangular gradient from the
 same zenith and horizon colours the sky shader uses, so the render is lit by
 your time of day rather than a studio preset.
 
-**Grass is not traced.** The blades exist only on the graphics card and there
-are far too many of them to hand a ray tracer. The ground keeps its colour;
-everything placed, the landscape and the water are traced.
+**Grass and roads are traced.** Roads were already real geometry. Grass was
+not — the blades exist only as twelve floats per blade (root, ground normal,
+yaw, size, droop, seed) that the vertex shader turns into a blade. So the blade
+is rebuilt on the CPU by the same arithmetic, in still air: no wind, no
+flutter, which is the resting pose and the right thing for a photograph. The
+same two-arc construction preserves length exactly, so a baked blade is the
+blade you were looking at, including its per-blade colour jitter.
+
+A quarter of a million blades is more than a BVH wants, so the field is thinned
+to a triangle budget by taking every Nth blade — evenly, rather than lopping
+off whichever corner was painted last — and the panel says how many of how many
+were traced. A village template traces at **6.48 M triangles**, of which
+130,060 of 260,119 blades.
+
+### The render has its own light
+
+Everything under **Light** in the Render panel belongs to the render, not the
+world: its own time of day, exposure, sun and sky strength, and whether the sky
+shows behind. So a village built at midday can be photographed at 1 a.m.
+without disturbing the light you are building under. Verified: night render
+averaged `14,18,30` while the world stayed at `140,173,154` and its clock never
+moved off 11:00.
+
+### Why the build blocks
+
+The BVH is built on the main thread, so a large scene stalls the tab for a few
+seconds. The library's async path requires its own BVH worker, and that worker
+does not run against the three version this project is pinned to. Worse, a
+generator that has begun asynchronously cannot then be built synchronously, so
+trying the worker and falling back leaves no way to recover — better to take
+the stall and say so before you press the button.
 
 ### Version notes
 

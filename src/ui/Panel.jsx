@@ -4,14 +4,12 @@ import { Icon, ICON } from './icons.jsx';
 import { STATIONS } from './copy.jsx';
 import { StationTools } from './panels/shared.jsx';
 import { TerrainPanel } from './panels/TerrainPanel.jsx';
-import { GrassPanel } from './panels/GrassPanel.jsx';
 import { PlacePanel } from './panels/PlacePanel.jsx';
 import { SelectPanel } from './panels/SelectPanel.jsx';
 import { Explorer } from './Explorer.jsx';
 
 const PANELS = {
   terrain: TerrainPanel,
-  grass: GrassPanel,
   place: PlacePanel,
   select: SelectPanel
 };

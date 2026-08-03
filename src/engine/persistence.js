@@ -75,6 +75,11 @@ export function decodeBlades(u8) {
   }
   Grass.count = n;
   markDirty(0, MAX_BLADES - 1);
+  /* A world saved when this was a grass painter still carries its blades.
+     They are dropped rather than restored: there is no longer any way to
+     add, remove or shape them, so keeping them would leave grass in the
+     scene that nothing can touch. */
+  Grass.count = 0;
   rebuildDensityGrid();
 }
 

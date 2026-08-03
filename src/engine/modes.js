@@ -20,15 +20,13 @@ import { cancelPending } from './input.js';
 
 export var MODES = [
   { id: 'terrain', key: '1' },
-  { id: 'grass', key: '2' },
-  { id: 'place', key: '3' },
-  { id: 'select', key: '4' }
+  { id: 'place', key: '2' },
+  { id: 'select', key: '3' }
 ];
 
 /** The tools each station shows up front. The first one is its default. */
 export var MODE_TOOLS = {
   terrain: ['raise', 'lower', 'smooth', 'flatten'],
-  grass: ['paint', 'erase', 'smooth'],
   place: ['place_one', 'place_many', 'place_erase'],
   select: ['select']
 };
@@ -36,14 +34,14 @@ export var MODE_TOOLS = {
 /** Tools you reach for less often; same station, one panel deeper. */
 export var EXTRA_TOOLS = {
   terrain: ['ramp', 'noise', 'erode'],
-  grass: ['eyedropper'],
   place: [],
   select: []
 };
 
 /* Stations that no longer exist map onto the one that replaced them, so a
    world saved before the four-station redesign still opens somewhere sensible. */
-export var LEGACY_MODES = { build: 'place', nature: 'place', people: 'place', roads: 'terrain' };
+export var LEGACY_MODES = { build: 'place', nature: 'place', people: 'place',
+                            roads: 'terrain', grass: 'terrain' };
 
 export function normalizeMode(id) {
   if (LEGACY_MODES[id]) return LEGACY_MODES[id];

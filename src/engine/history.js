@@ -136,7 +136,15 @@ export function bladeCapacityLeft() { return MAX_BLADES - Grass.count; }
 
 /* ---- PAINT --------------------------------------------------------------- */
 export var _tmpN = new THREE.Vector3();
-export function paintStamp(cx, cz, scale) {
+/* The grass system is gone. Its code is still here because the density
+   texture it maintained is what the ground shader samples, and the blade
+   buffers are what a pre-Diorama save file still contains — but nothing
+   plants a blade any more, so the count stays at zero and none of it ever
+   reaches the screen. */
+export function paintStamp() {
+  return 0;
+}
+function _retiredPaintStamp(cx, cz, scale) {
   var b = state.brush, g = state.grass, p = state.plate;
   var hw = p.width * 0.5, hd = p.depth * 0.5;
   var want = Math.max(1, Math.round(b.flow * b.radius * b.radius * 34 * (scale === undefined ? 1 : scale)));
@@ -371,6 +379,9 @@ export function eyedrop(cx, cz) {
 
 /* ---- FILL / CLEAR -------------------------------------------------------- */
 export function fillPlate() {
+  return 0;
+}
+function _retiredFillPlate() {
   var p = state.plate, b = state.brush, g = state.grass;
   var hw = p.width * 0.5, hd = p.depth * 0.5;
   var spacing = 1 / Math.sqrt(Math.max(b.maxDensity, 0.5));
