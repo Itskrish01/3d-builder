@@ -1,12 +1,12 @@
 import { emit, ui } from './host.js';
-import { Paths, kindsOfType, populateWorld } from './actors.js';
+import { Paths } from './actors.js';
 import { syncEnvUniforms, syncGrassUniforms, syncGroundUniforms } from './field.js';
 import { Dens, Grass, markDirty } from './grass.js';
-import { History, fillPlate } from './history.js';
+import { History } from './history.js';
 import { modeHasTool } from './modes.js';
 import { markSceneDirty } from './persistence.js';
 import { cam } from './renderer.js';
-import { Roads, applyRoadToTerrain, applyRoadTypeDefaults, clearGrassUnderRoads, decorateRoad, newRoad, rebuildAllRoads, roadCovers, roadSamples } from './roads.js';
+import { Roads, applyRoadToTerrain, applyRoadTypeDefaults, decorateRoad, newRoad, rebuildAllRoads, roadCovers, roadSamples } from './roads.js';
 import { clearSelection } from './selection.js';
 import { MAX_BLADES, state } from './state.js';
 import { Terrain, heightAt, normalYAt, rebuildPlate } from './terrain.js';
@@ -118,6 +118,11 @@ export function finishTemplate(name) {
   ui.toast(name + ' is ready', 'ok', 3000);
 }
 
+/* One world to start from, and it is empty. The finished scenes that used
+   to live here made the first thing a person did be deleting someone
+   else's work; everything in the world should be something they put
+   there. The grid is the only furniture, and it is there to judge
+   distance by. */
 export var TEMPLATES = [
   {
     id: 'baseplate', name: 'Blank Baseplate',
@@ -134,124 +139,6 @@ export var TEMPLATES = [
         grid: true, gridSpacing: 4, gridOpacity: 0.5
       });
       finishTemplate('Blank Baseplate');
-    }
-  },
-  {
-    id: 'plain', name: 'Empty Plain', desc: 'A gently rolling green field, ready for anything.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'rolling', amplitude: 1.6, frequency: 0.03,
-        octaves: 3, heightScale: 1, width: 120, depth: 120, resolution: 256, water: false,
-        autoTex: true, snowOn: false, grid: false });
-      fillPlate();
-      finishTemplate('Empty Plain');
-    }
-  },
-  {
-    id: 'village', name: 'Small Village', desc: 'A curving lane, cottages facing the street, trees and traffic.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'rolling', amplitude: 3.4, frequency: 0.022,
-        octaves: 4, heightScale: 1, width: 150, depth: 150, resolution: 256, water: false,
-        autoTex: true, snowOn: false, grid: false });
-      state.build.setback = 5;
-      var main = templateRoad('residential', [
-        { x: -70, z: -18 }, { x: -30, z: -6 }, { x: 8, z: 4 }, { x: 42, z: -6 }, { x: 70, z: -20 }
-      ], { lights: true, trees: true });
-      var side = templateRoad('dirt', [{ x: 6, z: 3 }, { x: 14, z: 32 }, { x: 30, z: 58 }], { trees: true });
-      templateFinishRoads();
-      templateStreetBuildings(main, kindsOfType('building'), 17, [-1, 1], 12);
-      templateStreetBuildings(side, kindsOfType('building'), 20, [1], 14);
-      templateScatter(kindsOfType('nature'), 220, { spacing: 4.5, min: 0.8, max: 1.4, minNormalY: 0.7 });
-      templateScatter(kindsOfType('nature'), 90, { spacing: 3, min: 0.7, max: 1.3 });
-      fillPlate();
-      clearGrassUnderRoads();
-      populateWorld(0.9);
-      finishTemplate('Small Village');
-    }
-  },
-  {
-    id: 'mountain', name: 'Mountain Town', desc: 'A snow-capped range with a road threading the valley floor.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'mountains', amplitude: 16, frequency: 0.016,
-        octaves: 5, heightScale: 1, width: 200, depth: 200, resolution: 256, water: false,
-        autoTex: true, snowOn: true, snowline: 12, snowBlend: 4, rockSlope: 0.78, grid: false });
-      state.build.setback = 6;
-      var road = templateRoad('street', [
-        { x: -90, z: 30 }, { x: -40, z: 10 }, { x: 0, z: 18 }, { x: 45, z: 4 }, { x: 92, z: 20 }
-      ], { lights: true });
-      templateFinishRoads();
-      templateStreetBuildings(road, kindsOfType('building'), 22, [-1, 1], 20);
-      templateScatter(kindsOfType('nature'), 500, { spacing: 3.4, min: 0.8, max: 1.5, minNormalY: 0.68, maxAlt: 16 });
-      templateScatter(kindsOfType('nature'), 220, { spacing: 4, min: 0.8, max: 1.8, minNormalY: 0.4 });
-      state.grass.height = 0.8;
-      state.plate.maxGrassSlope = 0.78;
-      fillPlate();
-      clearGrassUnderRoads();
-      populateWorld(0.6);
-      finishTemplate('Mountain Town');
-    }
-  },
-  {
-    id: 'city', name: 'City Block', desc: 'A street grid with towers, shops, pavements and heavy traffic.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'flat', amplitude: 0, frequency: 0.03,
-        octaves: 2, heightScale: 1, width: 180, depth: 180, resolution: 128, water: false,
-        autoTex: false, pattern: 'solid', baseColor: '#5c5f58', snowOn: false, grid: false });
-      state.build.setback = 3.5;
-      var roads = [];
-      for (var i = -1; i <= 1; i++) {
-        roads.push(templateRoad('street', [{ x: -85, z: i * 46 }, { x: 0, z: i * 46 }, { x: 85, z: i * 46 }], { lights: true, signs: true }));
-        roads.push(templateRoad('street', [{ x: i * 46, z: -85 }, { x: i * 46, z: 0 }, { x: i * 46, z: 85 }], { lights: true }));
-      }
-      templateFinishRoads();
-      for (var r = 0; r < roads.length; r++)
-        templateStreetBuildings(roads[r], kindsOfType('building'), 20, [-1, 1], 14);
-      templateScatter(kindsOfType('prop'), 120, { spacing: 5, min: 0.9, max: 1.1, align: 0 });
-      state.grass.height = 0.5;
-      fillPlate();
-      clearGrassUnderRoads();
-      populateWorld(2.2);
-      finishTemplate('City Block');
-    }
-  },
-  {
-    id: 'island', name: 'Coastal Island', desc: 'Warm water, palms along the beach and a track to the headland.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'island', amplitude: 11, frequency: 0.014,
-        octaves: 4, heightScale: 1, width: 170, depth: 170, resolution: 256,
-        water: true, waterLevel: -0.6, waterColor: '#31879f', waterDeep: '#0f3c52', foam: 1.2,
-        autoTex: true, snowOn: false, grassColor: '#5c8a3a', dirtColor: '#b09a68', grid: false });
-      var road = templateRoad('dirt', [{ x: -34, z: 34 }, { x: -6, z: 10 }, { x: 22, z: -14 }, { x: 40, z: -34 }], {});
-      templateFinishRoads();
-      templateStreetBuildings(road, kindsOfType('building'), 26, [1], 18);
-      templateScatter(kindsOfType('nature'), 180, { spacing: 4, min: 0.85, max: 1.4, minNormalY: 0.72, maxAlt: 3.2 });
-      templateScatter(kindsOfType('nature'), 120, { spacing: 4.5, min: 0.8, max: 1.3, minAlt: 3, minNormalY: 0.7 });
-      templateScatter(kindsOfType('nature'), 90, { spacing: 2.2, min: 0.8, max: 1.3, maxAlt: 0.6 });
-      templateScatter(kindsOfType('nature'), 90, { spacing: 4, min: 0.7, max: 1.5, minNormalY: 0.35 });
-      state.plate.maxGrassSlope = 0.7;
-      fillPlate();
-      clearGrassUnderRoads();
-      populateWorld(0.5);
-      finishTemplate('Coastal Island');
-    }
-  },
-  {
-    id: 'farm', name: 'Countryside Farm', desc: 'Barn, windmill, fenced fields and a dirt track through the crop.',
-    run: function () {
-      resetForTemplate({ mode: 'terrain', landform: 'rolling', amplitude: 2.6, frequency: 0.018,
-        octaves: 3, heightScale: 1, width: 160, depth: 160, resolution: 256, water: false,
-        autoTex: true, snowOn: false, grassColor: '#6b8a34', dirtColor: '#7d6a44', grid: false });
-      templateRoad('dirt', [{ x: -78, z: 20 }, { x: -20, z: 6 }, { x: 30, z: 16 }, { x: 78, z: 2 }], { trees: true });
-      templateFinishRoads();
-      // fenced paddock
-      templateScatter(kindsOfType('nature'), 40, { spacing: 5, min: 0.9, max: 1.2, align: 0 });
-      templateScatter(kindsOfType('nature'), 130, { spacing: 6, min: 0.8, max: 1.4, minNormalY: 0.75 });
-      state.grass.height = 1.5;
-      state.grass.baseColor = '#7a7a2e';
-      state.grass.tipColor = '#d8c878';
-      fillPlate();
-      clearGrassUnderRoads();
-      populateWorld(0.4);
-      finishTemplate('Countryside Farm');
     }
   }
 ];

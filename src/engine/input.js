@@ -9,7 +9,7 @@ import { exportPNG, markSceneDirty, saveScene } from './persistence.js';
 import { applyPreset } from './presets.js';
 import { PT, stopRender } from './pathtrace.js';
 import { cam, camera, canvas, resize, scene, viewH, viewW } from './renderer.js';
-import { Sel, _projV, boxSelect, clearSelection, commitSelectionChange, deleteSelection, duplicateSelection, gizmoHit, gizmoScale, moveSelection, pickObject, pickRoad, rotateSelection, scaleSelection, selectObjects, selectRoad, selectionCenter, snapshotSelection, stampPrefab } from './selection.js';
+import { Sel, _projV, boxSelect, clearSelection, commitSelectionChange, deleteSelection, setHover, duplicateSelection, gizmoHit, gizmoScale, moveSelection, pickObject, pickRoad, rotateSelection, scaleSelection, selectObjects, selectRoad, selectionCenter, snapshotSelection, stampPrefab } from './selection.js';
 import { state } from './state.js';
 import { Sculpt, Terrain, _rayD, _rayO, applyRamp, beginSculptStroke, endSculptStroke, heightAt, raycastGround, screenRay, sculptStamp } from './terrain.js';
 import { DEG, clamp, nowMs } from './util.js';
@@ -218,6 +218,10 @@ export function cancelPending() {
    POINTER
    ========================================================================== */
 export function bindInput() {
+  canvas.addEventListener('pointerleave', function () {
+    if (setHover(null)) emit('selection');
+    canvas.style.cursor = '';
+  });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   canvas.addEventListener('pointerdown', function (e) {
@@ -260,6 +264,15 @@ export function bindInput() {
 
   canvas.addEventListener('pointermove', function (e) {
     Cursor.sx = e.offsetX; Cursor.sy = e.offsetY; Cursor.over = true;
+    /* Only while picking, and never mid-drag: a raycast per move is cheap, but
+       lighting things up under a lasso would fight the lasso. */
+    if (state.world.mode === 'select' && !Ptr.mode && !PT.active) {
+      var hov = pickObject(e.offsetX, e.offsetY);
+      if (setHover(hov)) emit('selection');
+      canvas.style.cursor = hov ? 'pointer' : '';
+    } else if (Sel.hover) {
+      setHover(null); emit('selection'); canvas.style.cursor = '';
+    }
     if (Ptr.pos[e.pointerId]) { Ptr.pos[e.pointerId].x = e.clientX; Ptr.pos[e.pointerId].y = e.clientY; }
 
     if (Ptr.mode === 'pinch' && Ptr.ids.length >= 2) {
@@ -636,12 +649,22 @@ export function onKeyDown(e) {
       clearSelection();
       return;
     case 'Delete': case 'Backspace': deleteSelection(); return;
+    /* G / R / S pick the handle, the way they do in every other 3D tool.
+       They only make sense on something already placed, so they select first
+       rather than doing nothing when you are in the middle of adding. */
+    case 'g': case 'r': case 'R': case 't': case 'T': {
+      if (Keys.ctrl) break;
+      var want = e.key === 'g' ? 'move' : (e.key === 'r' || e.key === 'R') ? 'rotate' : 'scale';
+      setMode('select');
+      state.sel.gizmo = want;
+      markSceneDirty();
+      emit('state');
+      return;
+    }
     case 'x': case 'X': cycleTool(); return;
-    case 'r': Ghost.rot += Math.PI / 12; updateGhost(); return;
-    case 'R': Ghost.rot -= Math.PI / 12; updateGhost(); return;
     case 'f': focusSelection(); return;
     case 'p': case 'P': toggleSimulate(); return;
-    case 'g': case 'G':
+    case 'G':
       state.plate.grid = !state.plate.grid; syncGroundUniforms(); emit('state'); markSceneDirty(); return;
     case '[': nudgeRadius(-1); return;
     case ']': nudgeRadius(1); return;

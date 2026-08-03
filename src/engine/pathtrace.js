@@ -205,22 +205,40 @@ function bakeTerrain(scene) {
   /* Slope and altitude decide the ground colour in the terrain shader. Baking
      the same rules to vertex colours keeps rock on the cliffs and snow on the
      tops instead of flooding the whole plate with one green. */
-  var mat = new THREE.MeshStandardMaterial({ roughness: Math.max(0.35, p.roughness), metalness: 0 });
+  /* A base colour always, never the implicit white. Vertex colours are an
+     improvement on top of it, not the only thing standing between the ground
+     and a blank sheet — if they do not survive the merge into the BVH, the
+     terrain still comes out the colour of ground rather than the colour of
+     nothing. */
+  var base = new THREE.Color(
+    (p.autoTex && p.mode === 'terrain') ? p.grassColor : p.baseColor
+  );
+  var mat = new THREE.MeshStandardMaterial({
+    color: base,
+    roughness: Math.max(0.35, p.roughness), metalness: 0, side: THREE.DoubleSide
+  });
   if (p.autoTex && p.mode === 'terrain') {
     var pos = g.attributes.position.array, nrm = g.attributes.normal.array;
     var n = pos.length / 3;
     var cols = new Float32Array(n * 3);
     var grass = new THREE.Color(p.grassColor), rock = new THREE.Color(p.rockColor);
     var snow = new THREE.Color(p.snowColor), c = new THREE.Color();
-    var hi = -1e9, lo = 1e9;
-    for (var i = 0; i < n; i++) { var y = pos[i * 3 + 1]; if (y > hi) hi = y; if (y < lo) lo = y; }
-    var span = Math.max(hi - lo, 1e-3);
+    /* Mirroring GROUND_FS exactly. The first attempt guessed at both rules and
+       got both wrong: rock keys off the normal's y through a smoothstep, not
+       off a slope term, and the snow line is a WORLD HEIGHT, not a fraction of
+       the plate's range — which is why an island came back snow-capped all the
+       way down to the shore. */
+    var smooth = function (e0, e1, x) {
+      var t = Math.min(1, Math.max(0, (x - e0) / Math.max(e1 - e0, 1e-5)));
+      return t * t * (3 - 2 * t);
+    };
     for (var v = 0; v < n; v++) {
-      var slope = 1 - Math.min(1, Math.max(0, nrm[v * 3 + 1]));
-      var alt = (pos[v * 3 + 1] - lo) / span;
-      c.copy(grass);
-      c.lerp(rock, Math.min(1, Math.max(0, (slope - p.rockSlope) / Math.max(p.rockBlend, 0.01))));
-      if (p.snowOn) c.lerp(snow, Math.min(1, Math.max(0, (alt - p.snowline) / Math.max(p.snowBlend, 0.05))));
+      var ny = nrm[v * 3 + 1], h = pos[v * 3 + 1];
+      c.copy(grass).lerp(rock,
+        1 - smooth(p.rockSlope - p.rockBlend, p.rockSlope + p.rockBlend, ny));
+      if (p.snowOn) {
+        c.lerp(snow, smooth(p.snowline - p.snowBlend, p.snowline + p.snowBlend, h));
+      }
       cols[v * 3] = c.r; cols[v * 3 + 1] = c.g; cols[v * 3 + 2] = c.b;
     }
     g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -306,19 +324,44 @@ function bakeRoads(scene) {
 }
 
 function bakeWater(scene) {
-  if (!state.water || !state.water.on || !Water.geo || !Water.geo.attributes.position) return;
+  /* This read `state.water.on`, and there is no `state.water` — water lives on
+     the plate. So the guard was reading a property of undefined's sibling,
+     came back falsy every time, and the sea simply never got built. On an
+     island that leaves you looking at the empty sea floor. */
+  var p = state.plate;
+  if (!p.water || !Water.geo || !Water.geo.attributes.position) return;
+  if (!Water.geo.attributes.position.count) return;
+
   var g = Water.geo.clone();
-  /* Water is the one surface a path tracer really pays off on — it is doing
-     the refraction and the reflection for real rather than approximating both.
-   */
+  var shallow = new THREE.Color(p.waterColor || '#2f6f8f');
+  var deep = new THREE.Color(p.waterDeep || '#123648');
+  /* Water is the one surface a path tracer really pays off on: it does the
+     refraction and the reflection for real instead of approximating both.
+     Opacity drives transmission, so a sea the raster view draws as murky does
+     not come out as clear glass here. */
+  var op = p.waterOpacity === undefined ? 0.86 : p.waterOpacity;
   var mat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(state.water.color || '#2d6f8f'),
-    roughness: 0.06, metalness: 0, transmission: 0.92, thickness: 1.4, ior: 1.333
+    color: shallow.lerp(deep, 0.35),
+    roughness: 0.05,
+    metalness: 0,
+    transmission: clamp(1 - op * 0.75, 0.15, 0.95),
+    thickness: 2.5,
+    ior: 1.333,
+    attenuationColor: deep,
+    attenuationDistance: 6,
+    side: THREE.DoubleSide
   });
   var mesh = new THREE.Mesh(g, mat);
+  mesh.matrixAutoUpdate = false;
+  if (Water.mesh) {
+    mesh.matrix.copy(Water.mesh.matrixWorld);
+    mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  }
+  mesh.updateMatrixWorld(true);
   scene.add(mesh);
   built.push(g, mat);
   PT.meshes++;
+  if (g.index) PT.tris += g.index.count / 3;
 }
 
 /* The sky is the light. Handing the tracer the same gradient the sky shader

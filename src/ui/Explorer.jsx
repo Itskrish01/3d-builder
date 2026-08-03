@@ -287,15 +287,27 @@ export function Properties() {
       <Slider label="Forward / back" get={() => centre.z} set={(v) => nudge(2, v)}
         min={-500} max={500} step={0.05} unit=" m" tip="Position along the world." />
 
-      <Slider label="Turn" min={0} max={360} step={1} dec={0} unit="°"
-        tip="Rotation about the up axis."
-        get={() => (((one ? one.rotY : sel[0].rotY) / DEG) % 360 + 360) % 360}
-        set={(v) => {
-          const before = engine.snapshotSelection();
-          engine.rotateSelection(v * DEG - sel[0].rotY);
-          engine.commitSelectionChange(before, 'Turn');
-          engine.touch();
-        }} />
+      {/* One row per axis. Yaw still swings the selection about its middle,
+          which is what turning a row of houses should do; pitch and roll turn
+          each thing where it stands. */}
+      {[
+        { axis: 'y', label: 'Turn (up axis)', get: (o) => o.rotY },
+        { axis: 'x', label: 'Tip forward / back', get: (o) => o.rotX || 0 },
+        { axis: 'z', label: 'Roll left / right', get: (o) => o.rotZ || 0 }
+      ].map((r) => (
+        <Slider key={r.axis} label={r.label} min={-180} max={180} step={1} dec={0} unit="°"
+          tip="Rotation about this axis."
+          get={() => {
+            const v = (r.get(sel[0]) / DEG) % 360;
+            return v > 180 ? v - 360 : v < -180 ? v + 360 : v;
+          }}
+          set={(v) => {
+            const before = engine.snapshotSelection();
+            engine.rotateSelection(v * DEG - r.get(sel[0]), r.axis);
+            engine.commitSelectionChange(before, 'Turn');
+            engine.touch();
+          }} />
+      ))}
 
       <Slider label="Size" min={0.05} max={20} step={0.01} unit="×"
         tip="Scale. Everything selected scales about the middle of the selection."

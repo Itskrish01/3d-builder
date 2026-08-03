@@ -23,7 +23,8 @@
 .app > .panel,
 .app > .panel-toggle,
 .app > .hint,
-.app > .marquee { grid-row: 2 / 3; grid-column: 1 / 2; }
+.app > .marquee,
+.app > .toolbar { grid-row: 2 / 3; grid-column: 1 / 2; }
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -523,3 +524,66 @@
 .render-quality .qopt.on { border-color: var(--sun); background: var(--sun-wash); }
 .render-quality .qopt.on b { color: var(--sun); }
 .render-quality .qopt:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+
+/* ============================================================================
+   TOOLBAR — floating buttons, not a panel.
+
+   Each tool is its own round button with its own edge and its own shadow, so
+   the set reads as controls resting on the scene rather than as a slab of
+   interface bolted over it. It lives inside the stage, alongside the hint
+   pill, and never grows a background of its own.
+   ========================================================================== */
+.toolbar {
+  position: absolute;
+  left: calc(var(--rail) + var(--s3));
+  top: var(--s3);
+  z-index: 30;
+  display: flex; flex-direction: column;
+  gap: 7px;
+  /* the strip itself is nothing: only the buttons can be clicked, so the
+     gaps between them stay part of the viewport */
+  pointer-events: none;
+}
+.tool {
+  pointer-events: auto;
+  display: grid; place-items: center;
+  width: 40px; height: 40px; padding: 0;
+  border: 1px solid var(--rule-2);
+  border-radius: 99px;
+  background: rgb(22 19 14 / 88%);
+  backdrop-filter: blur(8px);
+  color: var(--straw);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / .38);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.tool svg { width: 18px; height: 18px; }
+.tool:hover:not(:disabled) {
+  background: rgb(38 33 25 / 94%); color: var(--chalk); transform: translateY(-1px);
+}
+.tool.on {
+  background: var(--sun); border-color: var(--sun); color: var(--soil);
+  box-shadow: 0 4px 16px rgb(255 180 61 / .34);
+}
+.tool.danger:hover:not(:disabled) { background: var(--clay); border-color: var(--clay); color: var(--soil); }
+.tool:disabled { opacity: .3; cursor: default; box-shadow: none; }
+.tool:focus-visible { outline: 2px solid var(--sun); outline-offset: 3px; }
+
+/* A gap, not a rule — the buttons are already separate objects. */
+.tool-sep { height: var(--s2); }
+
+/* The name is for screen readers and the tooltip; the icon is the button. */
+.tool-name {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+@media (max-width: 720px) {
+  .toolbar { left: calc(var(--rail) + var(--s2)); top: var(--s2); flex-direction: row; }
+  .tool-sep { width: var(--s2); height: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool:hover:not(:disabled) { transform: none; }
+}

@@ -81,7 +81,10 @@ InstanceLayer.prototype.write = function (i, o) {
   A.iSclSway[i4] = o.sx; A.iSclSway[i4 + 1] = o.sy; A.iSclSway[i4 + 2] = o.sz;
   A.iSclSway[i4 + 3] = o.sway;
   A.iTint[i3] = o.tint[0]; A.iTint[i3 + 1] = o.tint[1]; A.iTint[i3 + 2] = o.tint[2];
-  A.iAnim[i4] = o.phase; A.iAnim[i4 + 1] = o.rate; A.iAnim[i4 + 2] = o.pose; A.iAnim[i4 + 3] = o.sel ? 1 : 0;
+  A.iAnim[i4] = o.phase; A.iAnim[i4 + 1] = o.rate; A.iAnim[i4 + 2] = o.pose; /* Three states down one channel: 0 plain, 0.45 under the cursor, 1
+     selected. Adding a second instance attribute for a hover flag would have
+     meant a wider buffer and another upload per frame for a highlight. */
+  A.iAnim[i4 + 3] = o.sel ? 1 : (o.hover ? 0.45 : 0);
   this.dirty = true;
   this.boundsDirty = true;
 };

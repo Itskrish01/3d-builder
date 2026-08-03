@@ -5,13 +5,13 @@ import { STATIONS } from './copy.jsx';
 import { StationTools } from './panels/shared.jsx';
 import { TerrainPanel } from './panels/TerrainPanel.jsx';
 import { PlacePanel } from './panels/PlacePanel.jsx';
-import { SelectPanel } from './panels/SelectPanel.jsx';
+import { Properties } from './Explorer.jsx';
 import { Explorer } from './Explorer.jsx';
 
 const PANELS = {
   terrain: TerrainPanel,
   place: PlacePanel,
-  select: SelectPanel
+  select: Properties
 };
 
 /* ============================================================================

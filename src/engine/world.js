@@ -56,8 +56,14 @@ export function applyLayerVisibility() {
 export var _qA = new THREE.Quaternion(), _qB = new THREE.Quaternion(), _qC = new THREE.Quaternion();
 export var _upV = new THREE.Vector3(0, 1, 0), _nV = new THREE.Vector3();
 
+export var _eulA = new THREE.Euler();
 export function computeQuat(o) {
-  _qA.setFromAxisAngle(_upV, o.rotY);
+  /* Objects used to carry a single yaw, because everything placed stood on the
+     ground and only ever needed turning. A tool that lets you rotate on any
+     axis needs all three — YXZ order so that yaw stays the outermost turn and
+     behaves the way it always did for anything that only uses rotY. */
+  _eulA.set(o.rotX || 0, o.rotY || 0, o.rotZ || 0, 'YXZ');
+  _qA.setFromEuler(_eulA);
   if (o.align > 0.001 && state.plate.mode === 'terrain') {
     normalAt(o.x, o.z, _nV);
     _qB.setFromUnitVectors(_upV, _nV);
@@ -94,6 +100,8 @@ export function makeObject(kind, x, z, opt) {
     seed: seed,
     x: x, z: z, y: 0,
     rotY: opt.rotY === undefined ? 0 : opt.rotY,
+    rotX: opt.rotX === undefined ? 0 : opt.rotX,
+    rotZ: opt.rotZ === undefined ? 0 : opt.rotZ,
     scale: (opt.scale === undefined ? 1 : opt.scale) * (def.scale || 1),
     align: opt.align === undefined ? 0 : opt.align,
     tint: opt.tint ? opt.tint.slice() : [1, 1, 1],
@@ -169,6 +177,8 @@ export function serObj(o) {
   var r = { i: o.id, k: o.kind, s: o.seed,
             x: +o.x.toFixed(3), z: +o.z.toFixed(3),
             r: +o.rotY.toFixed(4), c: +o.scale.toFixed(3),
+            rx: o.rotX ? +o.rotX.toFixed(4) : undefined,
+            rz: o.rotZ ? +o.rotZ.toFixed(4) : undefined,
             a: +o.align.toFixed(3), yo: +o.yOff.toFixed(3) };
   if (o.tintCustom) r.tn = o.tint;
   if (o.folder) r.f = o.folder;
@@ -229,6 +239,7 @@ export function applyObjRecords(list) {
     var r = list[i], o = World.byId[r.i];
     if (!o) { deserObj(r); continue; }
     o.x = r.x; o.z = r.z; o.rotY = r.r; o.scale = r.c; o.align = r.a;
+    o.rotX = r.rx || 0; o.rotZ = r.rz || 0;
     o.yOff = r.yo || 0;
     if (r.tn) { o.tint = r.tn.slice(); o.tintCustom = true; }
     o.y = surfaceOrTerrainY(o) + o.yOff;

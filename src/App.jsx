@@ -6,8 +6,9 @@ import { Rail, Hint } from './ui/Rail.jsx';
 import { Panel } from './ui/Panel.jsx';
 import { WorldSheet } from './ui/WorldSheet.jsx';
 import { RenderOverlay } from './ui/Render.jsx';
+import { Toolbar } from './ui/Toolbar.jsx';
 import { SketchfabBrowser } from './ui/SketchfabBrowser.jsx';
-import { TemplatesDialog, HelpDialog, ShortcutsDialog } from './ui/dialogs.jsx';
+import { HelpDialog, ShortcutsDialog } from './ui/dialogs.jsx';
 import { Tour } from './ui/Tour.jsx';
 import { ErrorBoundary } from './ui/ErrorBoundary.jsx';
 
@@ -87,9 +88,16 @@ function Chrome({ hooks, marquee, chromeHidden, setChromeHidden }) {
     dialog.open((close) => <ShortcutsDialog onClose={close} />);
   }, [dialog]);
 
-  const openTemplates = useCallback(() => {
-    dialog.open((close) => <TemplatesDialog onClose={close} />);
-  }, [dialog]);
+  /* There is one world to start from, so a gallery of a single card is just a
+     click in the way. Ask the question the dialog was really asking. */
+  const openTemplates = useCallback(async () => {
+    const ok = await dialog.confirm({
+      title: 'Start a new world?',
+      message: 'This clears everything and leaves you an empty baseplate. Save first if you want to keep what you have.',
+      okLabel: 'New world'
+    });
+    if (ok) engine.TEMPLATES[0].run();
+  }, [dialog, engine]);
 
   const openWorld = useCallback(() => {
     dialog.open((close) => <WorldSheet onClose={close} />);
@@ -175,6 +183,7 @@ function Chrome({ hooks, marquee, chromeHidden, setChromeHidden }) {
             onOpenRender={() => setRenderOpen((v) => !v)}
           />
           <Rail />
+          <Toolbar onAdd={openImport} />
           <Panel open={panelOpen} onImport={openImport} />
           <button
             type="button"

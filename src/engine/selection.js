@@ -13,7 +13,8 @@ import { LayerState, World, addObject, catLocked, deleteObject, ogridMove, recor
 /* ==========================================================================
    24. SELECTION, GIZMO AND PREFABS
    ========================================================================== */
-export var Sel = { objs: [], road: null, roadPt: -1, outline: null, gizmo: null, drag: null };
+export var Sel = {
+  hover: null, objs: [], road: null, roadPt: -1, outline: null, gizmo: null, drag: null };
 
 export function createSelectionVisuals() {
   function lines(cap, order) {
@@ -67,6 +68,17 @@ export function boxEdges(cx, cy, cz, hx, hy, hz, col, out) {
   }
 }
 
+/* What the cursor is over, which is not the same as what is chosen. Locked and
+   hidden layers are skipped by pickObject, so anything that lights up is
+   something that can actually be picked. */
+export function setHover(o) {
+  if (Sel.hover === o) return false;
+  if (Sel.hover) { Sel.hover.hover = false; updateObject(Sel.hover); }
+  Sel.hover = o || null;
+  if (Sel.hover) { Sel.hover.hover = true; updateObject(Sel.hover); }
+  return true;
+}
+
 /* ---- selection state -----------------------------------------------------
 
    Every one of these repaints. The outline boxes and the gizmo describe what
@@ -79,6 +91,7 @@ export function clearSelection() {
   for (var i = 0; i < Sel.objs.length; i++) { Sel.objs[i].sel = false; updateObject(Sel.objs[i]); }
   Sel.objs.length = 0;
   Sel.road = null; Sel.roadPt = -1;
+  setHover(null);
   refreshSelectionVisuals();
   emit('selection');
 }
@@ -373,18 +386,28 @@ export function moveSelection(dx, dy, dz) {
   refreshSelectionVisuals();
   emit('selection');
 }
-export function rotateSelection(da) {
+export function rotateSelection(da, axis) {
   var c = selectionCenter();
   if (!c) return;
+  axis = axis || 'y';
   for (var i = 0; i < Sel.objs.length; i++) {
     var o = Sel.objs[i];
-    var dx = o.x - c.x, dz = o.z - c.z;
-    var ca = Math.cos(da), sa = Math.sin(da);
-    o.x = c.x + dx * ca - dz * sa;
-    o.z = c.z + dx * sa + dz * ca;
-    o.rotY += da;
-    o.y = surfaceOrTerrainY(o) + o.yOff;
-    ogridMove(o);
+    if (axis === 'y') {
+      /* Yaw also swings the objects around the middle of the selection, so
+         turning a row of houses rotates the row rather than spinning each
+         house on the spot. */
+      var dx = o.x - c.x, dz = o.z - c.z;
+      var ca = Math.cos(da), sa = Math.sin(da);
+      o.x = c.x + dx * ca - dz * sa;
+      o.z = c.z + dx * sa + dz * ca;
+      o.rotY += da;
+      o.y = surfaceOrTerrainY(o) + o.yOff;
+      ogridMove(o);
+    } else if (axis === 'x') {
+      o.rotX = (o.rotX || 0) + da;
+    } else {
+      o.rotZ = (o.rotZ || 0) + da;
+    }
     updateObject(o);
   }
   refreshSelectionVisuals();

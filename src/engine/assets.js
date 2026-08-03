@@ -223,6 +223,11 @@ void main(){
   if (vSel > 0.5){
     float rim = pow(1.0 - max(0.0, dot(N, V)), 2.0);
     lit = mix(lit, vec3(0.36, 0.78, 0.22), 0.20 + rim * 0.55);
+  } else if (vSel > 0.2){
+    // Under the cursor: an edge light only, so you can tell what you are about
+    // to pick without it looking like it is already picked.
+    float rim = pow(1.0 - max(0.0, dot(N, V)), 2.6);
+    lit = mix(lit, vec3(0.98, 0.71, 0.24), rim * 0.55);
   }
 
   lit = gp_fog(lit, length(cameraPosition - vW));

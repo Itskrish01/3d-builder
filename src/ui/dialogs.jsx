@@ -1,34 +1,7 @@
-import { useEngine } from './EngineProvider.jsx';
 import { Dialog } from './overlays.jsx';
 import { Btn } from './controls.jsx';
 import { ICON } from './icons.jsx';
 import { SHORTCUTS } from './copy.jsx';
-
-export function TemplatesDialog({ onClose }) {
-  const engine = useEngine();
-  return (
-    <Dialog title="Start a new world" onClose={onClose}>
-      <p>
-        Each one builds a whole finished place — ground, lanes, buildings, planting and traffic — for you
-        to change. It replaces whatever is in the world now, so save first if you want to keep it.
-      </p>
-      <div className="cards">
-        {engine.TEMPLATES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className="card"
-            data-tip={`Replace everything with ${t.name}`}
-            onClick={() => { onClose(); setTimeout(() => t.run(), 30); }}
-          >
-            <b>{t.name}</b>
-            <span>{t.desc}</span>
-          </button>
-        ))}
-      </div>
-    </Dialog>
-  );
-}
 
 export function HelpDialog({ onClose, onTour, onShortcuts }) {
   return (
